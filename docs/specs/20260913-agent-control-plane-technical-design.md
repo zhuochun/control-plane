@@ -1,10 +1,11 @@
-# Agent Control Plane — MVP Technical Decisions and Implementation Plan
+# aicp - Agent Control Plane — MVP Technical Decisions and Implementation Plan
 
 - Date: 2026-09-13
 - Status: Implementation baseline, not a survey of alternatives.
 - Product contract: [MVP product specification](20260913-agent-control-plane-product-spec.md)
 - Repository/module: `github.com/zhuochun/control-plane`
-- Executable: `acp` (`acp.exe` on Windows)
+- Executable: `aicp` (`aicp.exe` on Windows)
+- Naming: `aicp` is the product, command, and MCP registration name. Keep the existing repository/module and spec filenames; the data directory remains `control-plane` as specified below.
 
 ## 1. Architecture decisions
 
@@ -16,17 +17,17 @@ External cron / launchd / Task Scheduler / harness heartbeat
                          v
                  Codex or another harness
                   |                  |
-          existing source tools      +-- acp CLI / MCP stdio adapter
+          existing source tools      +-- aicp CLI / MCP stdio adapter
                   |                                  |
           Slack / email / Docs                       | HTTP/JSON
                                                      v
-Browser -- HTTP/JSON --> acp serve --> domain commands --> SQLite
+Browser -- HTTP/JSON --> aicp serve --> domain commands --> SQLite
              React SPA       |
                   ^          +-- embedded static assets and migrations
                   +----------+
 ```
 
-Only `acp serve` opens the database. There is one long-lived server, plus transient CLI processes and an optional harness-managed MCP adapter. There is no internal agent launcher, cron library, background source poller, or durable message broker.
+Only `aicp serve` opens the database. There is one long-lived server, plus transient CLI processes and an optional harness-managed MCP adapter. There is no internal agent launcher, cron library, background source poller, or durable message broker.
 
 ### 1.1 Selected stack
 
@@ -41,7 +42,7 @@ Only `acp serve` opens the database. There is one long-lived server, plus transi
 | Components | MUI Core with its documented styling dependencies | Cards, forms, dialogs, tabs, and standard tables; no paid grid. |
 | Routing | React Router in library mode | Browser routing only; no server framework. |
 | Server state | TanStack Query | Mutations and query invalidation; poll visible views every five seconds. |
-| Reports | `react-markdown` + `remark-gfm`, fixed React block/action registry | No arbitrary generated HTML/JS/React. |
+| Reports | `react-markdown` + `remark-gfm`, Markdown renderer and fixed action handlers | No arbitrary generated HTML/JS/React. |
 | Date handling | Native date/time inputs; server-side Go timezone conversion | Avoid a separate date-picker framework in P0. |
 | Testing | Go tests/`httptest`; Vitest/Testing Library; Playwright | Unit, integration, adapter, and browser coverage. |
 | Packaging | Go `embed`, GoReleaser, GitHub Actions | Platform archives plus checksums; package-manager publishing later. |
@@ -61,7 +62,7 @@ Do not confuse removal of permission features with removal of data correctness. 
 ## 2. Repository and module boundaries
 
 ```text
-cmd/acp/main.go
+cmd/aicp/main.go
 internal/
   app/                 # commands, queries, validation, transactions
   model/               # domain records and transport-neutral contracts
@@ -109,8 +110,8 @@ Defaults:
 ```text
 Listen: 127.0.0.1:7331
 Data directory: os.UserConfigDir()/control-plane
-Override: --data-dir or ACP_DATA_DIR
-Client base URL: --server or ACP_SERVER_URL
+Override: --data-dir or AICP_DATA_DIR
+Client base URL: --server or AICP_SERVER_URL
 Settings timezone: UTC until selected in UI
 ```
 
@@ -119,19 +120,19 @@ Persist settings, including the display timezone, in SQLite. Include Go `time/tz
 Core lifecycle commands:
 
 ```sh
-acp serve
-acp open
-acp doctor --json
-acp version
+aicp serve
+aicp open
+aicp doctor --json
+aicp version
 ```
 
 `serve` runs in the foreground and stops cleanly on an interrupt. Hold an OS-backed exclusive lock for the selected data directory before opening SQLite; a second server using that directory, even on a different port, must fail with a clear message. The lock must release on process exit/crash rather than relying on a stale PID file. `open` opens the configured portal URL or prints it when browser launch is unavailable. `doctor` checks server version, database/schema health, last received run, and Watch coverage; it does not test Slack credentials or claim an external scheduler is installed.
 
-A stopped server produces a clear CLI/MCP connection error and the suggested `acp serve` command. Adapters must not silently open the database or start competing daemons. A port conflict is an actionable startup error, not a reason to choose a random port.
+A stopped server produces a clear CLI/MCP connection error and the suggested `aicp serve` command. Adapters must not silently open the database or start competing daemons. A port conflict is an actionable startup error, not a reason to choose a random port.
 
 Create the data directory on first use. A schema from a newer incompatible application fails with an upgrade message rather than being reset. Do not copy a live WAL database as a backup; document stopping the server before copying the data directory for the first release.
 
-Release installation means downloading and extracting the appropriate archive, placing the binary on PATH, and running `acp serve`. Homebrew/Scoop/winget names must not be advertised as available before they are actually published. `go install` is not the primary installation promise because a source checkout needs a frontend build.
+Release installation means downloading and extracting the appropriate archive, placing the binary on PATH, and running `aicp serve`. Homebrew/Scoop/winget names must not be advertised as available before they are actually published. `go install` is not the primary installation promise because a source checkout needs a frontend build.
 
 ## 4. Storage design
 
@@ -145,33 +146,44 @@ SQL migrations and frontend assets are embedded into the binary. Before a migrat
 
 ### 4.2 Minimal tables
 
+**Column admission rule:** every structured field must name the P0 query, relationship, constraint, state transition, or rendering action that consumes it. Use Markdown for meaning interpreted by agents. Do not introduce topic taxonomies, threshold objects, evidence graphs, outcome metrics, or source-status enums, including inside JSON. A field being easy to extract is not a reason to store it separately.
+
+The table list separates durable operational responsibilities; it is not an instruction to normalize every content attribute. JSON below is a bounded document stored in SQLite TEXT, not a family of child tables. Keep the minimal transport envelope typed; treat prose and source-specific checkpoints as opaque. Do not duplicate content between columns and payloads.
+
 | Table | Main fields / purpose |
 | --- | --- |
 | `settings` | Key/value app settings, including timezone. |
-| `interests` | ID, title, purpose, include/exclude/context text, lifecycle state, revision, timestamps. |
-| `watches` | ID, Interest ID, primary source JSON, instructions/context, interval, lookback, lifecycle state, revision, cursor JSON, last attempt/success/error, next due time. |
-| `items` | ID, globally unique dedupe key, kind, Interest/Watch/parent IDs, title/summary, current content JSON, context Markdown, external refs/status, content version/hash, local state fields, state version, timestamps. |
+| `interests` | ID, title, one `instructions_md`, lifecycle state, revision, created/updated timestamps. Title supports display; state/revision support eligibility and safe edits. |
+| `watches` | ID, Interest ID, primary source JSON (`kind`, `locator`), one `instructions_md`, interval/lookback seconds, lifecycle state, revision, opaque cursor JSON, `next_due_at`, created/updated timestamps. These support source identity, inspection windows, eligibility, and checkpoint fencing. Derive last attempt/success/error from `watch_results`. |
+| `items` | ID, globally unique dedupe key, kind, optional Interest/Watch/parent IDs, title/summary, current content JSON, content version/hash, `todo_state`, `remind_at`, reminder timezone, acknowledged content version, `user_note`, state version, created/content-updated/state-updated timestamps. Columns support identity, filtering, navigation, no-op detection, and independent user actions. Content JSON owns report, sources, and optional context; no duplicate body/context/status columns. |
 | `item_versions` | Immutable snapshots of substantive item content by item ID and content version. |
-| `proposals` | ID, unique proposal key, target type/ID, expected target revision, operation, configuration payload, reason/evidence, resolution state. |
-| `runs` | ID, runner label, status, start/end/lease expiry, selected Watch revisions, brief event watermarks, summary. |
-| `watch_results` | One result per Run/Watch pair; status, coverage, error, receipt, item IDs. |
+| `proposals` | ID, unique proposal key, target type/ID, expected target revision, operation, configuration payload, one `rationale_md` containing reason and evidence links, resolution state. Payload reuses the minimal Interest/Watch configuration contract. |
+| `runs` | ID, runner label, status, start/end/lease expiry, selected Watch and parent Interest revisions, brief event watermarks, summary. |
+| `watch_results` | Run/Watch IDs (unique pair), status, recorded timestamp, bounded result JSON containing coverage, error text, and item IDs. Supports per-Watch health and run completion; retry responses belong only in `command_receipts`. |
 | `events` | Monotonic sequence, timestamp, actor label, entity, change type, and compact payload. |
-| `runner_state` | Singleton cursor for human/config changes acknowledged by the periodic loop. |
 | `command_receipts` | Unique request ID, normalized body hash, response; implements retry idempotency. |
+
+Store the singleton acknowledged event cursor as a server-owned settings key, updated transactionally by run completion and excluded from user-editable settings. `GET/PATCH /settings` exposes only user-editable keys; the cursor is neither returned nor accepted there. No separate `runner_state` table is needed. Keep version snapshots, events, and receipts: they respectively support content history, change delivery, and retry safety.
+
+Required relationships belong in columns only where the application navigates, filters, or constrains them. Parent item IDs support direct handoff navigation. Other related IDs and external agent/session references can be links or labeled text in `context_md`; no delegation or relationship tables. Item `context_md` is optional free-form handoff text inside content JSON, without prescribed headings or subfields.
+
+Source references use only `id`, `url`, `label`, and `observed_at` for action resolution, navigation, attribution, and freshness. Keep source-specific IDs in the dedupe key or context when needed; do not require a second normalized source identity on every reference. Watch source identity is the exact `kind`/`locator` pair; compare it to decide when to clear a checkpoint. Cursors remain source-specific opaque JSON.
 
 Use UUIDs with readable prefixes where helpful; IDs are opaque, and clients must not parse ordering from them. Store instants consistently as UTC integers in SQLite, expose RFC3339 timestamps in JSON, and store the reminder's IANA timezone separately.
 
 Store small report bodies in the DB in P0; an item content snapshot is capped at 512 KiB and a publication request at 4 MiB. Larger file artifacts and attachment uploading are deferred. Preserve Markdown/JSON exportability through item read APIs.
 
-Index Watch eligibility, item dedupe keys, Todo/reminder filters, Interest relationships, event sequence, and Run/Watch results. Basic search is a parameterized literal substring over title, summary, and context; escape SQL LIKE wildcards. This intentionally supports simple Chinese substring queries without claiming semantic search. FTS5 is a later optimization, with tokenizer behavior evaluated before adopting it. [SQLite FTS5](https://sqlite.org/fts5.html)
+Index Watch eligibility, item dedupe keys, Todo/reminder filters, Interest relationships, event sequence, and Run/Watch results (including Watch ID/recorded time for health reads). Basic search is a parameterized literal substring over title, summary, and `context_md` extracted from content JSON; escape SQL LIKE wildcards. Do not maintain a duplicate context column for this bounded P0 query. This intentionally supports simple Chinese substring queries without claiming semantic search. FTS5 is a later optimization, with tokenizer behavior evaluated before adopting it. [SQLite FTS5](https://sqlite.org/fts5.html)
 
 ### 4.3 Separate content from local state
 
-Agent-owned content includes title, summary, body, source evidence, context, source status, and external IDs. User interaction state includes Todo, reminder, acknowledged content version, and user note.
+Agent-owned content includes the title, summary, report body, source references, and optional context text. Source status and external IDs are described in that content or represented by the dedupe key when the agent needs them; they are not additional required item columns. User interaction state includes Todo, reminder, acknowledged content version, and user note.
 
 `content_version` and `state_version` are independent. A report refresh must not conflict merely because the user set a reminder, nor overwrite that reminder. Agent ingestion may specify initial local state on creation only; subsequent publications ignore no state fields silently—they reject attempts to set existing local state through the content contract.
 
 Use normalized content hashing for no-op detection. Exclude last-inspection timestamps and run metadata from the substantive hash; keep them as freshness metadata. Normalize ordered versus unordered collections deliberately. An unchanged item creates neither a new content version nor an unacknowledged update. An agent should also avoid gratuitous paraphrasing when source content has not changed.
+
+Specifically exclude `sources[].observed_at` from the substantive hash. A valid publication with otherwise identical content updates these timestamps in the current content JSON without changing `content_version`, `content_updated_at`, acknowledgement, or immutable history; its Watch-result record still records the inspection. For a retained source ID, keep the later observation instant. Historical snapshots retain the observation times present when created. Source IDs/URLs/labels, title, summary, kind, relationships, context, Markdown, and actions remain substantive. Canonicalize JSON object keys and source order by source ID; preserve Markdown text and action order. Treat omitted actions as `[]` and omitted context as empty text. No-op detection does not bypass revision or lease checks.
 
 Deduplication keys identify the continuing matter, not the run or current summary. Example: `slack:T_EXAMPLE:C_PLATFORM:thread:1726000000.000001`. Include stable workspace/account/source identity to avoid collisions; do not rely on the display title. A new version of the same thread uses the same key.
 
@@ -193,13 +205,15 @@ A Watch is eligible when it and its parent Interest are active and `next_due_at 
 
 Accept intervals from 1 to 31,536,000 seconds; use 7,200 seconds by default. There are no cron expressions or automatic catch-up executions in P0. Pausing or changing a Watch increments its configuration revision. An explicit interval/instruction change or resume makes it due now and reanchors its interval grid. Changing the primary source identity also clears its successful cursor and coverage baseline; never apply one source's cursor to another. Preserve prior run history. Do not run background timers just to mark records due; eligibility is queried against the clock.
 
-For interactive debugging and the fixture demo, `acp run start --watch <id> --force` may select an active Watch before its due time. It still does not launch a harness, and normal completion follows the same checkpoint rules.
+For interactive debugging and the fixture demo, `aicp run start --watch <id> --force` may select an active Watch before its due time. It still does not launch a harness, and normal completion follows the same checkpoint rules.
 
 ### 5.2 Brief and run start
 
 `GET /api/v1/brief` is read-only. It returns eligible Watch summaries, pending human/config changes, open related items, reminders, and operational health. Large reports are referenced by ID, not embedded by default.
 
 `POST /api/v1/runs` registers work and returns the authoritative run brief: selected Watch IDs and revisions, source cursors, relevant context IDs, and an event range `(after_seq, through_seq]` captured at run start. Default selection is up to 20 eligible Watches; return `more_due_count`, not silent truncation. Events are pageable within the captured range.
+
+Capture each selected Watch's parent Interest ID, revision, and instructions in the same transaction. Publication checks the current parent revision against this server-held snapshot as well as checking the Watch revision. Any intervening Interest edit returns `409 interest_changed` and commits no items or checkpoint. Interest edits increment its revision; instruction changes or reactivation make its active Watches due now without clearing their source cursors. This prevents a previously completed Watch from delaying inspection under the revised instructions. Pausing/deprecating still makes the Watches ineligible. No extra client-supplied Interest revision is needed in each publication.
 
 P0 has one active periodic run globally. Serialize start in a transaction, expire any overdue lease, then acquire the run. A competing start receives `409 run_in_progress`. Use a 30-minute lease and a renew command for longer analyses. The lease is durable; late publications from an expired run are rejected.
 
@@ -212,6 +226,8 @@ A result contains a request ID, Run/Watch IDs, expected Watch revision, coverage
 Publish a successful Watch result atomically: validate lease and Watch revision, validate items, save content versions/events, record coverage, advance that Watch's cursor and due time, and save the receipt. P0 permits one final result per Run/Watch pair.
 
 For `partial` or `failed`, record the attempt and error/limitations but do not advance the successful cursor. A failed result contains no item upserts. Partial findings may be saved only if explicitly marked partial in their content; they never imply full source coverage. A later run may reread the same window; item deduplication makes replay harmless.
+
+Every committed result (`success`, `partial`, or `failed`) is terminal for that Run/Watch pair. A partial result cannot be upgraded in the same run. Reusing its request ID and identical request replays the receipt; a new request ID for an already committed pair returns `409 watch_result_exists`. Validation/conflict failures commit no result, so a corrected request may use a new request ID while the run remains valid. Partial item writes, coverage, events, and receipt commit atomically, with cursor and due time unchanged. To complete partial coverage, finish the current run and inspect again in a later run. The existing "one final result" rule does not permit incremental chunks within one Watch.
 
 The request body uses the following envelope; Run and Watch IDs are path parameters. This valid example is a successful empty scan. Item entries use the shape in section 7. `status` is `success | partial | failed`; include an `error` string for partial/failed results and omit or null `cursor_after` unless successful.
 
@@ -286,18 +302,42 @@ Common error envelope:
 
 Use `400` for malformed JSON, `404` for unknown IDs, `409` for conflicts/overlap, `413` for size limits, `422` for valid JSON with invalid fields, and `500` for unexpected failures. Return validation paths. Use `503` only for a genuinely temporary unavailable server dependency.
 
+### 6.0 Shared command payloads
+
+These are transport contracts, not new SQL fields. All mutation bodies contain `request_id`. Path IDs remain outside the HTTP body. Reject unknown envelope fields; opaque cursors and Markdown remain unconstrained by domain schemas. A successful mutation returns the resulting record (with ID and relevant revisions), except publication, which returns `{run_id, watch_id, status, items: [{id, content_version, state_version, changed}]}`. Store the complete response in the receipt. Bind receipt identity to HTTP method, path, and normalized body, so the same body sent to a different item cannot replay another item's command.
+
+| Operation | Body fields in addition to `request_id` |
+| --- | --- |
+| Start run | `runner_label`; optional `watch_ids` (omitted selects due Watches, `[]` selects none), `force` (default false). Force requires explicit IDs and never selects inactive Watches. Return the run and captured `brief`. |
+| Renew run | No additional fields. Extend a live lease to server now plus 30 minutes; expired/finished runs conflict. |
+| Finish run | `summary`, optional `ack_through_seq` (omission leaves cursor unchanged). Server computes status under section 5.4; expired runs cannot advance acknowledgement. |
+| Create Interest | `title`, `instructions_md`, optional `state` (default active). |
+| Create Watch | `interest_id`, `source: {kind, locator}`, `instructions_md`, optional `interval_seconds` (7200), `lookback_seconds` (604800), `state` (active). |
+| Update Interest/Watch | `expected_revision` and changed editable fields from creation. Omitted fields are unchanged. Reject null for required configuration fields; server-owned cursor/due fields cannot be supplied. Watch parent is fixed after creation. |
+| Create item | The item shape in section 7, with `expected_content_version: 0` and optional `initial_todo_state`. |
+| Update item content | `expected_content_version` and changed agent-owned fields from section 7. Dedupe key is immutable; omitted fields are unchanged. `report` and `sources` replace their complete values when supplied; `context_md: null` clears context. No existing local-state fields are accepted. |
+| Item action | `expected_state_version`, `action` as specified below. Return the updated item. |
+| User note | `expected_state_version`, `user_note` (empty text clears). |
+| Propose change | `proposal_key`, `target_type`, `operation`, `rationale_md`; create uses `payload` with creation fields and no target ID/revision; update uses `target_id`, `expected_revision`, and an editable-fields `payload`; deprecate uses target ID/revision without payload. |
+| Resolve proposal | `resolution` is `accepted` or `rejected`. The pending-to-resolved transition is atomic; repeat same resolution returns the resolved record, opposite resolution conflicts. Acceptance checks the proposal's stored target revision. |
+| Settings | `timezone` (valid IANA name); no internal keys. This single display preference uses last committed write wins, unlike versioned Interest/Watch configuration. |
+
+An item action is one of `{type: set_todo, state: none|todo|done}`, `{type: clear_reminder}`, `{type: acknowledge, content_version}`, or `{type: set_reminder, date, time?, timezone, utc_offset?}`. These are shape notations; actual JSON strings must be quoted. Acknowledge requires `1 <= content_version <= current_content_version` and advances acknowledgement monotonically. The reminder fields follow section 7. `open_link` is navigation and has no mutation endpoint. Generated reminder descriptors contain no date: the fixed editor constructs the mutation body.
+
 ### 6.1 MCP subset
 
-`acp mcp` runs the official SDK's stdio transport and delegates to the same typed HTTP client as the CLI. It must not open a second SQLite connection or serve the web app.
+`aicp mcp` runs the official SDK's stdio transport and delegates to the same typed HTTP client as the CLI. It must not open a second SQLite connection or serve the web app.
 
 Expose a small initial tool set: `get_brief`, `get_changes`, `start_run`, `renew_run`, `publish_watch_result`, `finish_run`, `get_item`, `get_context`, `propose_change`, and `apply_item_action`. Bootstrap/configuration and less frequent management remain available through the CLI. Full one-to-one MCP coverage of every CRUD endpoint is not a P0 requirement.
 
+MCP reuses the HTTP request/response types above; it does not define another domain schema. `get_brief` takes `{}`; `get_changes` takes `after_seq`, `through_seq`, and optional `cursor`; `get_item` and `get_context` take `item_id` (context also accepts optional `cursor`). `start_run` and `propose_change` take their HTTP bodies directly. `renew_run` and `finish_run` add `run_id` to their HTTP bodies. `publish_watch_result` adds `run_id` and `watch_id` to the section 5.3 body. `apply_item_action` adds `item_id` to the item-action body. The adapter removes path IDs before sending HTTP. Reads return the corresponding HTTP result; mutations return the command result above. Tool failures preserve the common error code/message/details and mark the tool result as an error. Commit exact tool schemas and shared request/result fixtures with the implementation; schema generation must use these shared types.
+
 Use structured typed arguments/results and document each tool's effects. Stdout contains only MCP messages. The official SDK provides stdio transport and schema-aware tools; pin a tested stable tag rather than promising a particular future protocol version. [Official Go SDK](https://pkg.go.dev/github.com/modelcontextprotocol/go-sdk/mcp)
 
-The target Codex registration after installing `acp` is:
+The target Codex registration after installing `aicp` is:
 
 ```sh
-codex mcp add control-plane -- acp mcp
+codex mcp add aicp -- aicp mcp
 ```
 
 Use an absolute executable path where PATH is not inherited by the harness. This follows Codex's documented stdio registration form; test against the installed Codex version. [Codex MCP](https://developers.openai.com/codex/mcp/)
@@ -306,7 +346,9 @@ Use an absolute executable path where PATH is not inherited by the harness. This
 
 Commit `schemas/report-v1.schema.json` and `schemas/watch-result-v1.schema.json` with matching Go types, TypeScript discriminated unions, and valid/invalid shared fixtures. Use strict decoding and explicit domain validation in Go; schema documents are also part of the agent-facing interface. Tests must detect schema/implementation drift.
 
-The containing Item owns its summary, sources, and local state. Its `report` field owns only presentation blocks and action descriptors. The current Todo/reminder values are never copied into report JSON.
+The containing Item owns its summary, sources, and local state. Its `report` field contains `schema_version: 1`, `body_md`, and optional `actions` (default empty). Markdown provides lists and tables; no separate block schema is required. The current Todo/reminder values are never copied into report JSON. Validate the envelope, source references, and executable action descriptors; do not validate prose into a domain ontology.
+
+All four item kinds use this same required `report` envelope, including notes, tasks, and outcomes. `kind` controls labeling/filtering and the creation-time Todo default only; it does not select a content schema. Creation requires `dedupe_key`, `expected_content_version: 0`, `kind`, `title`, `summary`, `sources` (an array, possibly empty for local items), and `report`. Optional fields are `context_md`, `interest_id`, `watch_id`, `parent_id`, and `initial_todo_state` (creation only). For Watch publications, the server assigns the publishing Watch/Interest association and rejects conflicting supplied IDs. Source-backed findings require at least one source reference. Each source ID is unique within the item; action source references must resolve there. The API exposes these fields directly; storage places only report/sources/context in content JSON and assembles the full item from its columns. `body_md` may be plain prose and does not require headings; no kind-specific body fields or tables are needed.
 
 Example item in a Watch-result publication (all values are synthetic):
 
@@ -320,41 +362,15 @@ Example item in a Watch-result publication (all values are synthetic):
   "sources": [
     {
       "id": "thread",
-      "kind": "slack",
-      "external_id": "T_EXAMPLE/C_PLATFORM/1789264800.000001",
       "url": "https://example.slack.com/archives/C_PLATFORM/p1789264800000001",
       "label": "Migration discussion",
       "observed_at": "2026-09-13T10:04:00+08:00"
     }
   ],
-  "external_status": "open",
   "context_md": "Confirmed: a rollout decision is outstanding. Next check: inspect replies in this thread. Do not treat an acknowledgement as a decision.",
   "report": {
     "schema_version": 1,
-    "blocks": [
-      {
-        "type": "markdown",
-        "text": "## What changed\nThe proposed order changed after the dependency review.\n\n## Suggested next step\nRead the options and reply in the original thread."
-      },
-      {
-        "type": "key_values",
-        "entries": [
-          {"label": "Needs", "value": "Your decision"},
-          {"label": "Source status", "value": "Open"}
-        ]
-      },
-      {
-        "type": "table",
-        "columns": [
-          {"key": "option", "label": "Option"},
-          {"key": "tradeoff", "label": "Trade-off"}
-        ],
-        "rows": [
-          {"option": "Small cohort first", "tradeoff": "Slower expansion, easier validation"},
-          {"option": "Full cohort", "tradeoff": "Faster expansion, larger validation surface"}
-        ]
-      }
-    ],
+    "body_md": "## What changed\nThe proposed order changed after the dependency review. Source status: open; no decision was observed in the linked thread.\n\n| Option | Trade-off |\n| --- | --- |\n| Small cohort first | Slower expansion, easier validation |\n| Full cohort | Faster expansion, larger validation surface |\n\n## Suggested next step\nRead the options and reply in the original thread.",
     "actions": [
       {"id": "open-thread", "type": "open_link", "label": "Open Slack thread", "source_ref": "thread"},
       {"id": "todo", "type": "set_todo", "label": "Set Todo", "state": "todo"},
@@ -383,21 +399,21 @@ Example local action request:
 }
 ```
 
-Date and optional time are interpreted on the server in the supplied valid IANA timezone; omitted time is 09:00. The response includes the resulting RFC3339 UTC instant, selected timezone, and new state version. Validate a round trip to reject nonexistent local times. For an ambiguous local time, require an explicit UTC offset selection rather than silently choosing an occurrence. A precise RFC3339 `at` value with explicit offset can be supported as the alternative input; it is mutually exclusive with the date/time fields.
+Date and optional time are interpreted on the server in the supplied valid IANA timezone; omitted time is 09:00. The response includes the resulting RFC3339 UTC instant, selected timezone, and new state version. Validate a round trip to reject nonexistent local times. For an ambiguous local time, return `422 ambiguous_local_time` with candidate `utc_offset` values (`+HH:MM` or `-HH:MM`). The fixed editor asks the user to select an occurrence and resubmits with the selected offset and a new request ID. An offset inconsistent with the named zone/date/time is rejected. P0 uses this one input form; a separate RFC3339 `at` input is deferred.
 
 Changing the app display timezone later does not move stored reminder instants. Done clears `remind_at`; reopening does not resurrect it. Removing Todo (`none`) does not clear an independent reminder. Acknowledge includes the displayed `content_version` and must not acknowledge newer unseen content.
 
 Use a server-supplied `now` for reminder eligibility, not a browser-only guess. No persistent reminder job is necessary: query `remind_at <= now`, with the product's Done/clearing rules. Clock-dependent logic uses an injected clock in tests.
 
-Render Markdown with raw HTML disabled. Unknown new block/action types are rejected at ingestion. For old stored documents with unsupported blocks or versions, show an explicit fallback containing the fixed summary and source links; keep standard local controls functional. Avoid making schema validation a general plugin engine.
+Render Markdown with raw HTML disabled. Unknown report versions/action types are rejected at ingestion. For old stored documents with unsupported report versions, show an explicit fallback containing the fixed summary and source links; keep standard local controls functional. Avoid making schema validation a general plugin engine.
 
-A block registry and an action registry are ordinary TypeScript maps/switches over discriminated unions. No dynamic imports selected by the model, remote component execution, or generic form builder. [react-markdown](https://github.com/remarkjs/react-markdown)
+A single Markdown renderer and a small action map/switch over a discriminated union are sufficient. No block registry, dynamic imports selected by the model, remote component execution, or generic form builder. [react-markdown](https://github.com/remarkjs/react-markdown)
 
 ## 8. Proposals and context
 
 ### 8.1 Configuration proposals
 
-Proposal operations are `create | update | deprecate`; targets are `interest | watch`. A proposal has a stable key incorporating target/change intent and source evidence version, a human-readable reason, evidence references, and a typed configuration payload. Update/deprecate includes `expected_revision`.
+Proposal operations are `create | update | deprecate`; targets are `interest | watch`. A proposal has a stable key incorporating target/change intent and source evidence version, one `rationale_md` explaining the reason and linked evidence, and a configuration payload using the same minimal fields as a direct configuration edit. Update/deprecate includes `expected_revision`. Evidence interpretation belongs to the agent; the server deduplicates the supplied key and validates the configuration operation.
 
 Acceptance applies the configuration change and resolves the proposal in one transaction. A changed target yields `409 proposal_stale`; the user can reject it or the agent can submit a revised proposal. Repeating acceptance returns the existing result, not another object. Rejection records an event and keeps the evidence/key for repeat suppression.
 
@@ -405,7 +421,7 @@ Deprecation is soft. It stops eligibility; it does not delete reports, Todo stat
 
 ### 8.2 Context packets
 
-`GET /items/{id}/context` returns the item, source references, context notes, local state/user note, parent/related IDs, external delegation IDs, and a bounded recent history. Include content/state versions and report IDs rather than dumping every report.
+`GET /items/{id}/context` returns the item, source references, optional `context_md`, local state/user note, parent ID, and a bounded recent history. Related item links and external delegation/session references remain readable within context text; do not require extracted fields. Include content/state versions and item/version references rather than dumping every historical report.
 
 Allow explicit context updates through the versioned item-content endpoint. Background updates must incorporate the user's note rather than overwriting it. No chain-of-thought storage is required; save usable facts, conclusions, attempted approaches, open questions, and next steps.
 
@@ -415,7 +431,7 @@ Return byte/item limits, a `truncated` flag, and continuation links when bounded
 
 Use a small client-side router for Attention, Interests, Library, Activity, and stable `/items/:id` links. The Go SPA handler must serve the real `index.html` for valid client routes but not swallow unknown `/api/...` routes or missing static assets.
 
-Use MUI Core's standard controls and tables. Keep layout and action semantics fixed; only report sections are model-specified. No custom design system, drag library, chart library, or premium component is necessary to deliver P0. [MUI installation](https://mui.com/material-ui/getting-started/installation/)
+Use MUI Core's standard controls and tables. Keep layout and action semantics fixed; only the report Markdown body and action descriptors are agent-specified. No custom design system, drag library, chart library, or premium component is necessary to deliver P0. [MUI installation](https://mui.com/material-ui/getting-started/installation/)
 
 Configure TanStack Query explicitly: poll active views every five seconds, refetch on focus, stop unnecessary polling in hidden views, invalidate related queries after mutations, and do not retry mutations blindly. An operation shows success only after the server acknowledges it. Conflict errors offer refresh/reapply rather than pretending the click succeeded. [TanStack Query defaults](https://tanstack.com/query/latest/docs/framework/react/guides/important-defaults)
 
@@ -447,7 +463,7 @@ codex exec - < /absolute/path/to/control-plane/examples/heartbeat-prompt.md
 A PowerShell counterpart is:
 
 ```powershell
-Get-Content -Raw 'C:\path\to\control-plane\examples\heartbeat-prompt.md' | codex exec -
+Get-Content -Encoding UTF8 -LiteralPath 'C:\path\to\control-plane\examples\heartbeat-prompt.md' -Raw | codex exec -
 ```
 
 The checked-in wrappers must set an explicit working directory, preserve the exit code, use configurable absolute binary/prompt paths where needed, and document log redirection. They must not auto-edit the user's scheduler or silently assume a noninteractive process inherits the interactive shell's PATH and tool settings.
@@ -497,7 +513,7 @@ npm --prefix web run test -- --run
 npm --prefix web run build
 go vet ./...
 go test ./...
-CGO_ENABLED=0 go build -trimpath -o dist/acp ./cmd/acp
+CGO_ENABLED=0 go build -trimpath -o dist/aicp ./cmd/aicp
 npm --prefix web run test:e2e
 ```
 

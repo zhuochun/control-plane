@@ -1,8 +1,9 @@
-# Agent Control Plane — MVP Product Specification
+# aicp - Agent Control Plane — MVP Product Specification
 
 - Date: 2026-09-13
 - Status: Ready for implementation; P0 is the delivery boundary.
 - Repository: `zhuochun/control-plane`
+- Product/command name: `aicp`; the repository and spec filenames remain `control-plane`.
 - Companion: [Technical decisions and implementation plan](20260913-agent-control-plane-technical-design.md)
 - Intended reader: An agent implementing, testing, and packaging the product end-to-end.
 
@@ -49,18 +50,20 @@ Out of scope: accounts, authentication/RBAC, multi-user collaboration, cloud syn
 | External run loop | Brief, run registration, incremental checkpoints, durable user changes, result publication, overlap protection, and run history. |
 | Items | Source-backed notes, reports, tasks, and lightweight outcome updates in one consistent model. |
 | Simple interaction | Open source, set/unset Todo, mark Done/reopen, acknowledge, and set/change/clear a reminder. |
-| Generated reports | Markdown, key-value sections, tables, and typed actions rendered inside a fixed shell. |
+| Generated reports | Markdown (including lists and tables) and optional typed actions rendered inside a fixed shell. |
 | Adaptive attention | Agents propose creation, revision, or deprecation of Interests and Watches. Users accept or reject. |
-| Context and handoff | Small persisted context notes, parent item references, source references, and external agent/session IDs. |
+| Context and handoff | Small persisted context notes, parent item references, source references, and external agent/session references in context text. |
 | Delivery | Offline demo, automated tests, installation/build instructions, and an external-heartbeat example. |
 
 P0 is intentionally not a drag-and-drop Kanban. Todo and Done filters provide the first work view. A Kanban projection may follow after the attention loop is useful.
 
 ## 4. Small domain model
 
+**Structure only what the application operates on.** A structured field must support a concrete P0 query, relationship, constraint, state transition, or rendering action. Agents can interpret text: purpose, topic boundaries, thresholds, findings, evidence explanations, and handoff notes do not need separate schemas. Moving an unnecessary schema into JSON does not make it minimal. Preserve the operational fields needed for reliable persistence, reminders, deduplication, checkpoints, and concurrency.
+
 ### Interest
 
-An Interest states **why the user cares**: title, purpose, relevant/excluded topics, optional context, and `active | paused | deprecated` state.
+An Interest states **why the user cares**: title, one `instructions_md` document, and `active | paused | deprecated` state. The document describes purpose, relevant/excluded topics, and background in ordinary prose; no mandatory sections or separate topic fields.
 
 Examples: merchant migration risk, infrastructure cost, or personal commitments. An Interest does not need an Outcome or a task hierarchy.
 
@@ -68,7 +71,7 @@ Examples: merchant migration risk, infrastructure cost, or personal commitments.
 
 A Watch states **where and how to inspect**. P0 uses one primary source per Watch to keep checkpoints and failures simple. Several Watches can share an Interest. A cost investigation may cite secondary sources without making them separate scheduled integrations.
 
-Store a source kind and locator/query, inspection instructions, interval, optional baseline lookback, context, lifecycle state, and the last successful source checkpoint. Initial default interval is two hours; initial baseline lookback is seven days, both editable.
+Store a source kind and exact locator/query, one `instructions_md` document, interval, optional baseline lookback, lifecycle state, and the last successful source checkpoint. Instructions include context, thresholds, and how to inspect in ordinary prose. Initial default interval is two hours; initial baseline lookback is seven days, both editable.
 
 The locator must identify the actual channel, folder, document, mailbox query, Epic, or generic source. The server does not resolve vague source names or fetch their contents; the harness does.
 
@@ -76,7 +79,9 @@ A source is configuration, not a server-side connector. No separate Sources prod
 
 ### Item
 
-An Item is something worth retaining and showing. Its kind is `note | report | task | outcome`. It has a stable ID and deduplication key, title, summary, source references, generated content, optional context, and related IDs.
+An Item is something worth retaining and showing. Its kind is `note | report | task | outcome`. It has a stable ID and deduplication key, title, summary, source references, generated content, optional context, and an optional parent item ID. A source reference only needs an item-local ID, an HTTP(S) URL, a label, and an observation time for navigation and freshness. Other source metadata, related item links, and external session IDs belong in free-form context text.
+
+All four kinds also use the same Markdown report envelope; the word `report` names their shared content field, not a restriction to the report kind. Kind changes labeling/filtering and the initial Todo default, not the content schema.
 
 All kinds share independent local interaction state:
 
@@ -91,7 +96,7 @@ An outcome is a lightweight item describing the intended result, latest evidence
 
 ### Proposal
 
-A Proposal suggests creating, updating, or deprecating one Interest or Watch. It contains the proposed configuration, reason, evidence, and the target version it was based on. State is `pending | accepted | rejected`.
+A Proposal suggests creating, updating, or deprecating one Interest or Watch. It contains the proposed minimal configuration, one rationale document with the reason and evidence links, and the target revision it was based on. State is `pending | accepted | rejected`.
 
 Acceptance is an ordinary local configuration edit, not a permission framework. New background discoveries are proposals; explicit user instructions in the harness may directly create or edit configuration through the CLI.
 
@@ -105,7 +110,7 @@ These are the core concepts. Do not create separate services for observations, i
 
 ### 5.1 Install and configure
 
-The user starts `acp serve`, opens the portal with `acp open`, and gives the harness instructions such as:
+The user starts `aicp serve`, opens the portal with `aicp open`, and gives the harness instructions such as:
 
 > Every two hours, inspect these two Slack channels, recently modified documents in this Drive folder, and infrastructure cost emails. Track my explicit commitments, delivery risks, and unusual cost changes.
 
@@ -141,7 +146,7 @@ The report can contain more context, a table of options, and supporting source l
 
 Set Todo is immediate and does not call a model. The card appears in Todos. Done marks the local follow-up complete and clears its active reminder. Reopen returns it to Todo without restoring an old reminder.
 
-Remind me opens a fixed date/time form. Saving changes the same item's reminder and shows the chosen time. Actions remain available even when a generated report omits them or a report block cannot render.
+Remind me opens a fixed date/time form. Saving changes the same item's reminder and shows the chosen time. Actions remain available even when a generated report omits them or a report cannot render.
 
 ### 5.4 Reminder behavior
 
@@ -169,7 +174,7 @@ A useful report need not automatically be a task. The user can set Todo or a rem
 
 The user opens Slack and answers the thread. A subsequent scan records the observed source status and evidence in the existing Item.
 
-**For P0, source reconciliation updates observed status and report content, not existing local Todo/reminder state.** Show “Resolved in source” with the relevant evidence and a Done action. Automatic closure of local Todos is deliberately deferred.
+**For P0, source reconciliation updates report content, not existing local Todo/reminder state.** Write “Resolved in source” with the relevant evidence in the report and retain the standard Done action. Observed source status is prose, not a required enum, badge, or query field. Automatic closure of local Todos is deliberately deferred.
 
 This distinction prevents a new report or an uncertain inferred reply from erasing a user's reminder. Conversely, local Done does not claim that a Jira issue was closed.
 
@@ -185,7 +190,7 @@ One proposal targets one object in P0. A new Interest followed by a Watch may us
 
 ### 5.8 Cross-session or cross-agent continuation
 
-An agent writes context containing confirmed facts, failed attempts, unanswered questions, and a next step. It may create a child task with a parent item ID and store an external delegation/session ID.
+An agent writes context containing confirmed facts, failed attempts, unanswered questions, and a next step. It may create a child task with a parent item ID and record an external delegation/session ID in that context text.
 
 Another agent reads the Item's context and sources by ID. The Control Plane preserves the handoff; the harness starts or coordinates that agent. “Delegated” must not be displayed as “running” without a reported run.
 
@@ -200,7 +205,7 @@ Use four top-level destinations:
 | Library | All items; filters for reports, tasks, outcomes, Todo/Done, Interest, and text; detail and history. |
 | Activity | Recent runs, source coverage, failures, and user/agent changes; small settings area. |
 
-A stable item detail shell shows title, kind, current local state, reminder, sources, observed source status, content timestamp, last successful inspection, generated body, user note, and history.
+A stable item detail shell shows title, kind, current local state, reminder, sources, content timestamp, last successful inspection, generated body, user note, and history. Observed source status is explained in the generated body.
 
 Default attention order: due reminders by scheduled time, explicit Todo items, other new findings, then pending proposals. An item can match multiple categories but must not multiply its count. Acknowledge hides ordinary update attention for that content version; it does not hide an open Todo or a due reminder.
 
@@ -208,7 +213,7 @@ Distinguish empty states: no Watches configured, never scanned, successfully sca
 
 ## 7. Generated UI contract
 
-Agents generate data, not React or scripts. The v1 report envelope has `schema_version`, ordered blocks, and typed actions; the containing Item supplies its summary and sources. Supported blocks are Markdown, key-value lists, and simple tables.
+Agents generate data, not React or scripts. The v1 report envelope has `schema_version`, `body_md`, and optional typed `actions` (omission means none); the containing Item supplies its summary and sources. Markdown supports prose, lists, labeled values, and tables without separate block schemas. Do not require a block registry or a structured table model for P0.
 
 Supported actions are:
 
@@ -224,7 +229,7 @@ Actions operate on the containing item only. Arbitrary endpoints, scripts, shell
 
 The action label is descriptive; the action type determines behavior. The renderer uses the same command handlers as ordinary UI controls. It must not maintain a second copy of Todo/reminder state inside report JSON.
 
-If a stored block is unsupported, show the fixed summary and sources with a clear fallback. New invalid schemas are rejected on ingestion with actionable validation errors; do not silently drop invalid actions.
+If a stored report version is unsupported, show the fixed summary and sources with a clear fallback. New invalid envelopes are rejected on ingestion with actionable validation errors; do not silently drop invalid actions. Validation checks operational fields and types, not the organization or meaning of the prose.
 
 ## 8. Consistency rules
 
@@ -252,10 +257,15 @@ If a stored block is unsupported, show the fixed summary and sources with a clea
 | P0-09 | Accept/reject creation and deprecation proposals; changes persist, stale proposals conflict, and inactive Watches disappear from eligible work. |
 | P0-10 | One Watch succeeds and another fails; only the successful checkpoint advances, coverage remains truthful, and the failed Watch is offered again. |
 | P0-11 | Concurrent starts do not create two active runs; an expired run cannot publish late results, and a new run can proceed. |
-| P0-12 | Obtain a context packet by item ID in a new session; it contains parent/external IDs, facts, source references, user changes, and next steps without old chat history. |
+| P0-12 | Obtain a context packet by item ID in a new session; it contains the parent and any external references, facts, source references, user changes, and next steps without old chat history. |
 | P0-13 | The cost fixture produces a source-backed 18% analysis, while an incomparable-period fixture explicitly reports that comparison is unavailable. |
-| P0-14 | Invalid report/action JSON receives a useful error. An unsupported stored block falls back without losing sources or standard item controls. |
+| P0-14 | Invalid report/action JSON receives a useful error. An unsupported stored report version falls back without losing sources or standard item controls. |
 | P0-15 | The deterministic fixture runner completes two heartbeat cycles, including user actions between them, through public CLI/API interfaces rather than direct DB writes. |
+| P0-16 | Create an Interest and Watch using free-form instructions and publish a Markdown report containing a table and source-status explanation. They remain readable in the next brief/detail without topic, threshold, external-status, or report-block schemas; ordinary Todo/reminder controls still work when generated actions are omitted. |
+| P0-17 | Create one item of each kind with the same content shape; all render and support local actions, with only task defaulting to Todo. |
+| P0-18 | Republish identical content with a later source observation time; freshness updates but content version, acknowledgement, local state, and content history do not change. |
+| P0-19 | Edit parent Interest instructions during a run; the old run cannot publish or advance that Watch's checkpoint. The next run receives the revised instructions and due Watch. |
+| P0-20 | Commit a partial Watch result; retrying the same request replays it, while replacing it within the same run conflicts. A later run can complete coverage without duplicating saved items. |
 
 ## 10. Delivery and iteration
 
@@ -263,6 +273,6 @@ Deliver working code, not just scaffolding. Include a fixture-backed demo, a ref
 
 The offline demo is a mandatory end-to-end test, not a claim that Slack credentials exist. Attempt a real harness/source smoke test only when the environment provides it; otherwise document the precise untested integration boundary while completing the entire local product.
 
-After dogfooding, consider SSE, a Kanban view, richer report blocks, large file artifacts, FTS5, recurring or OS reminders, preauthorized Watch adjustments, and OS service installation. None are prerequisites for P0.
+After dogfooding, consider SSE, a Kanban view, richer report presentation, large file artifacts, FTS5, recurring or OS reminders, preauthorized Watch adjustments, and OS service installation. None are prerequisites for P0.
 
 The implementation agent should use the defaults in these two documents for reversible choices, record justified deviations in the repository, and finish build/test/package verification before declaring completion. Do not expand scope to solve speculative future problems.
