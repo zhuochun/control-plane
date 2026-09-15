@@ -48,11 +48,11 @@ test("a report survives Todo, reminder, reload, and Done", async ({
   await expect(
     page.getByRole("button", { name: "Clear reminder" }),
   ).toBeVisible();
-  await expect(page.getByText(/UTC/)).toBeVisible();
+  await expect(page.getByText(/Reminder/)).toBeVisible();
 
   await page.reload();
   await expect(page.getByRole("button", { name: "Mark Done" })).toBeVisible();
-  await expect(page.getByText(/UTC/)).toBeVisible();
+  await expect(page.getByText(/Reminder/)).toBeVisible();
   await page.getByRole("button", { name: "Mark Done" }).click();
   await expect(page.getByRole("button", { name: "Reopen Todo" })).toBeVisible();
   await expect(
@@ -93,4 +93,42 @@ test("a person can accept an agent proposal and inspect its history", async ({
     page.getByText(/this keeps release changes together/),
   ).toBeVisible();
   await expect(page.getByText("accepted")).toBeVisible();
+});
+
+test("preferences keep browser defaults and expose agent context", async ({
+  page,
+  request,
+}) => {
+  await page.goto("http://127.0.0.1:7331/preferences");
+  await expect(
+    page.getByRole("heading", { name: "Preferences" }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole("button", { name: "Use browser default" }),
+  ).toBeVisible();
+  await expect(page.getByLabel("Agent instructions")).toHaveValue(
+    /Working with aicp/,
+  );
+  await expect(page.getByLabel("Owner context")).toHaveValue(/Owner context/);
+
+  await page
+    .getByLabel("Agent instructions")
+    .fill("# Agent rules\n\nRead the brief first.");
+  await page
+    .getByLabel("Owner context")
+    .fill("# Owner\n\nPrefer concise evidence.");
+  await page.getByRole("button", { name: "Save preferences" }).click();
+  await expect(page.getByText("Preferences saved.")).toBeVisible();
+
+  const settings = await request.get("/api/v1/settings");
+  expect(settings.ok()).toBeTruthy();
+  const settingsBody = await settings.json();
+  expect(settingsBody.agents_md).toBe("# Agent rules\n\nRead the brief first.");
+  const brief = await request.get("/api/v1/brief");
+  expect(brief.ok()).toBeTruthy();
+  const body = await brief.json();
+  expect(body.contexts["AGENTS.md"]).toBe(
+    "# Agent rules\n\nRead the brief first.",
+  );
+  expect(body.contexts["USER.md"]).toBe("# Owner\n\nPrefer concise evidence.");
 });

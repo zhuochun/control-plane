@@ -2,7 +2,7 @@
 
 Use the configured aicp MCP tools to complete one truthful heartbeat:
 
-1. Call `start_run` and consume every page in its captured `(after_seq, through_seq]` change range before relying on older assumptions.
+1. Call `start_run`, read both text contexts in `brief.contexts` (`AGENTS.md` and `USER.md`), and consume every page in its captured `(after_seq, through_seq]` change range before relying on older assumptions.
 2. Inspect only the selected Watches. Use their exact source, combined Interest and Watch instructions, captured revision, and opaque cursor. Revisit linked open items when useful.
 3. Before updating an existing finding, call `get_item` or `get_context`; retain its stable dedupe key and use the current content version.
 4. Publish exactly one final result for every selected Watch. A successful no-change scan publishes an empty item list. Report incomplete or failed coverage honestly; never advance a cursor past unread content.

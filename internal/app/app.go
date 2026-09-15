@@ -93,30 +93,90 @@ func (a *App) event(ctx context.Context, tx *sql.Tx, actor, entityType, entityID
 
 type Settings struct {
 	Timezone string `json:"timezone"`
+	AgentsMD string `json:"agents_md"`
+	UserMD   string `json:"user_md"`
 }
 type SetSettings struct {
-	RequestID string `json:"request_id"`
-	Timezone  string `json:"timezone"`
+	RequestID string  `json:"request_id"`
+	Timezone  string  `json:"timezone"`
+	AgentsMD  *string `json:"agents_md,omitempty"`
+	UserMD    *string `json:"user_md,omitempty"`
+}
+
+type settingsRow struct {
+	timezoneValue string
+	timezoneMode  string
+	agentsMD      string
+	userMD        string
+}
+
+func readSettings(ctx context.Context, db querier) (settingsRow, error) {
+	var row settingsRow
+	err := db.QueryRowContext(ctx, `SELECT
+  (SELECT value FROM settings WHERE key='timezone'),
+  COALESCE((SELECT value FROM settings WHERE key='timezone_mode'), 'custom'),
+  COALESCE((SELECT value FROM settings WHERE key='agents_md'), ''),
+  COALESCE((SELECT value FROM settings WHERE key='user_md'), '')`).Scan(&row.timezoneValue, &row.timezoneMode, &row.agentsMD, &row.userMD)
+	return row, err
+}
+
+func (row settingsRow) public() Settings {
+	timezone := row.timezoneValue
+	if row.timezoneMode == "auto" {
+		timezone = "browser"
+	}
+	return Settings{Timezone: timezone, AgentsMD: row.agentsMD, UserMD: row.userMD}
 }
 
 func (a *App) Settings(ctx context.Context) (Settings, error) {
-	var settings Settings
-	err := a.Store.DB.QueryRowContext(ctx, "SELECT value FROM settings WHERE key = 'timezone'").Scan(&settings.Timezone)
-	return settings, err
+	row, err := readSettings(ctx, a.Store.DB)
+	if err != nil {
+		return Settings{}, err
+	}
+	return row.public(), nil
 }
 
 func (a *App) SetSettings(ctx context.Context, input SetSettings) (json.RawMessage, error) {
 	return a.mutate(ctx, input.RequestID, "PATCH /settings", input, func(tx *sql.Tx) (any, error) {
-		if input.Timezone == "" || input.Timezone == "Local" {
-			return nil, Invalid("timezone must be an IANA timezone such as Asia/Singapore")
-		}
-		if _, err := time.LoadLocation(input.Timezone); err != nil {
-			return nil, Invalid(fmt.Sprintf("unknown timezone %q", input.Timezone))
-		}
-		settings := Settings{Timezone: input.Timezone}
-		if _, err := tx.ExecContext(ctx, "UPDATE settings SET value = ? WHERE key = 'timezone'", input.Timezone); err != nil {
+		current, err := readSettings(ctx, tx)
+		if err != nil {
 			return nil, err
 		}
+		if input.Timezone == "" || input.Timezone == "Local" {
+			return nil, Invalid("timezone must be an IANA timezone such as Asia/Singapore, or browser")
+		}
+		timezoneValue := input.Timezone
+		timezoneMode := "custom"
+		if input.Timezone == "browser" {
+			timezoneValue = "UTC"
+			timezoneMode = "auto"
+		} else if _, err := time.LoadLocation(input.Timezone); err != nil {
+			return nil, Invalid(fmt.Sprintf("unknown timezone %q", input.Timezone))
+		}
+		agentsMD := current.agentsMD
+		if input.AgentsMD != nil {
+			agentsMD = *input.AgentsMD
+		}
+		userMD := current.userMD
+		if input.UserMD != nil {
+			userMD = *input.UserMD
+		}
+		if len([]byte(agentsMD)) > 64<<10 || len([]byte(userMD)) > 64<<10 {
+			return nil, Invalid("context files must each be 64 KiB or smaller")
+		}
+		if _, err = tx.ExecContext(ctx, "UPDATE settings SET value = ? WHERE key = 'timezone'", timezoneValue); err != nil {
+			return nil, err
+		}
+		if _, err = tx.ExecContext(ctx, "UPDATE settings SET value = ? WHERE key = 'timezone_mode'", timezoneMode); err != nil {
+			return nil, err
+		}
+		if _, err = tx.ExecContext(ctx, "UPDATE settings SET value = ? WHERE key = 'agents_md'", agentsMD); err != nil {
+			return nil, err
+		}
+		if _, err = tx.ExecContext(ctx, "UPDATE settings SET value = ? WHERE key = 'user_md'", userMD); err != nil {
+			return nil, err
+		}
+		settings := Settings{Timezone: input.Timezone, AgentsMD: agentsMD, UserMD: userMD}
 		if err := a.event(ctx, tx, "user", "settings", "timezone", "settings.updated", settings); err != nil {
 			return nil, err
 		}

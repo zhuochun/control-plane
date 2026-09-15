@@ -71,6 +71,19 @@ dependencies, type-checks and builds the portal, runs Go tests and vet, builds
 the executable, runs Playwright, and then runs the demo. Install Chromium once
 with `npx --prefix web playwright install chromium` when needed.
 
+### Simulate OKR updates
+
+With `aicp serve` running, seed five different outcome metrics and then publish
+their next-period values through the normal run/publication path:
+
+```powershell
+.\scripts\okr-simulation.ps1 -Phase baseline
+.\scripts\okr-simulation.ps1 -Phase update
+```
+
+The simulator uses its own stable deduplication keys, so the second command
+updates the same metric items and preserves any local Todo or reminder state.
+
 ## Backup and restore
 
 Stop `aicp serve` before copying its data directory. The database uses SQLite
