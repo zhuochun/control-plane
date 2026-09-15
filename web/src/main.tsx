@@ -1,24 +1,18 @@
-import React, { useState } from "react";
+import React from "react";
 import { createRoot } from "react-dom/client";
 import { BrowserRouter, NavLink, Route, Routes } from "react-router";
 import {
   QueryClient,
   QueryClientProvider,
-  useMutation,
   useQuery,
 } from "@tanstack/react-query";
-import {
-  Alert,
-  Button,
-  CssBaseline,
-  TextField,
-  ThemeProvider,
-  createTheme,
-} from "@mui/material";
+import { Alert, CssBaseline, ThemeProvider, createTheme } from "@mui/material";
 import "./style.css";
 import { api, collection } from "./api";
 import { Interests } from "./interests";
 import { Attention, ItemDetail, Library } from "./items";
+import { Preferences } from "./preferences";
+import { formatDateTime, useSettings } from "./settings";
 
 type ActivityProposal = {
   id: string;
@@ -29,12 +23,15 @@ type ActivityProposal = {
 };
 
 const theme = createTheme({
-  palette: { primary: { main: "#246b59" }, background: { default: "#f6f5f1" } },
+  palette: {
+    primary: { main: "#246b59" },
+    background: { default: "#f6f5f1" },
+  },
   typography: {
     fontFamily: 'Inter, "Segoe UI", sans-serif',
     button: { textTransform: "none", fontWeight: 600 },
   },
-  shape: { borderRadius: 10 },
+  shape: { borderRadius: 9 },
   components: { MuiButton: { defaultProps: { disableElevation: true } } },
 });
 const client = new QueryClient({
@@ -49,11 +46,7 @@ const client = new QueryClient({
 });
 
 function Activity() {
-  const settings = useQuery({
-    queryKey: ["settings"],
-    queryFn: () => api<{ timezone: string }>("/settings"),
-  });
-  const [draft, setDraft] = useState<string | null>(null);
+  const settings = useSettings();
   const runs = useQuery({
     queryKey: ["runs"],
     queryFn: () =>
@@ -70,25 +63,28 @@ function Activity() {
     queryKey: ["proposals", "history"],
     queryFn: () => collection<ActivityProposal>("/proposals"),
   });
-  const save = useMutation({
-    mutationFn: (timezone: string) =>
-      api<{ timezone: string }>("/settings", {
-        request_id: crypto.randomUUID(),
-        timezone,
-      }),
-    onSuccess: (result) => {
-      client.setQueryData(["settings"], result);
-      setDraft(null);
-    },
-  });
   return (
     <>
       <header className="page-header">
-        <div className="eyebrow">Your local workspace</div>
+        <div className="eyebrow">History that stays close</div>
         <h1>Activity</h1>
-        <p>A clear view of what has happened, and what comes next.</p>
+        <p>Runs, coverage, and the decisions that shape what happens next.</p>
       </header>
-      <section className="panel activity-runs">
+      <div className="activity-summary" aria-label="Activity summary">
+        <div className="summary-metric blue">
+          <strong>{runs.data?.length ?? "—"}</strong>
+          <span>agent runs</span>
+        </div>
+        <div className="summary-metric gold">
+          <strong>{proposals.data?.length ?? "—"}</strong>
+          <span>configuration decisions</span>
+        </div>
+        <div className="summary-metric green">
+          <strong>{settings.data ? "Local" : "—"}</strong>
+          <span>workspace state</span>
+        </div>
+      </div>
+      <section className="panel activity-panel">
         <div className="section-heading">
           <h2>Agent runs</h2>
           <span className="tag">Local history</span>
@@ -97,20 +93,18 @@ function Activity() {
           <Alert severity="error">Cannot load run history.</Alert>
         )}
         {runs.data?.length === 0 && (
-          <p>
-            No agent runs yet. Due Watches will be offered through the brief.
-          </p>
+          <div className="empty-inline">
+            <strong>No agent runs yet.</strong>
+            <p>Due Watches will be offered through the next agent brief.</p>
+          </div>
         )}
         {runs.data?.slice(0, 20).map((run) => (
           <div className="run-row" key={run.id}>
             <div>
               <strong>{run.runner_label}</strong>
               <small>
-                {new Intl.DateTimeFormat(undefined, {
-                  dateStyle: "medium",
-                  timeStyle: "short",
-                }).format(new Date(run.started_at))}{" "}
-                · {run.selected_watches.length}{" "}
+                {formatDateTime(run.started_at, settings.data?.timezone)} ·{" "}
+                {run.selected_watches.length}{" "}
                 {run.selected_watches.length === 1 ? "Watch" : "Watches"}
               </small>
               {run.summary && <p>{run.summary}</p>}
@@ -148,49 +142,6 @@ function Activity() {
             </div>
           ))}
       </section>
-      <section className="panel">
-        <div className="section-heading">
-          <h2>Display timezone</h2>
-          <span className="tag">Local preference</span>
-        </div>
-        <p>
-          Choose the timezone used for dates and reminders. Saved reminders keep
-          their original instant.
-        </p>
-        {settings.isError && (
-          <Alert severity="error">
-            Cannot load settings. Check that aicp is running.
-          </Alert>
-        )}
-        <form
-          className="settings-form"
-          onSubmit={(event) => {
-            event.preventDefault();
-            save.mutate(draft ?? settings.data?.timezone ?? "UTC");
-          }}
-        >
-          <TextField
-            label="Timezone"
-            size="small"
-            value={draft ?? settings.data?.timezone ?? ""}
-            onChange={(event) => {
-              setDraft(event.target.value);
-              save.reset();
-            }}
-            helperText="For example, Asia/Singapore"
-            disabled={!settings.data}
-          />
-          <Button
-            type="submit"
-            variant="contained"
-            disabled={save.isPending || !settings.data}
-          >
-            {save.isPending ? "Saving…" : "Save preference"}
-          </Button>
-        </form>
-        {save.isError && <Alert severity="error">{save.error.message}</Alert>}
-        {save.isSuccess && <Alert severity="success">Timezone saved.</Alert>}
-      </section>
     </>
   );
 }
@@ -200,39 +151,49 @@ function Portal() {
     queryKey: ["status"],
     queryFn: () => api<{ version: string; database: string }>("/status"),
   });
+  const navigation = [
+    ["/", "Attention", "◉"],
+    ["/interests", "Interests", "✳"],
+    ["/library", "Library", "▤"],
+    ["/activity", "Activity", "↗"],
+  ];
   return (
     <div className="workspace">
-      <aside className="sidebar">
-        <NavLink className="brand" to="/">
-          <span className="brand-mark">a</span>aicp
-          <span className="brand-dot">.</span>
-        </NavLink>
-        <div className="sidebar-caption">Your attention, considered.</div>
-        <nav aria-label="Main navigation">
-          {[
-            ["/", "Attention", "◉"],
-            ["/interests", "Interests", "✳"],
-            ["/library", "Library", "▤"],
-            ["/activity", "Activity", "↗"],
-          ].map(([path, label, icon]) => (
-            <NavLink end key={path} to={path}>
-              <span aria-hidden="true">{icon}</span>
-              {label}
+      <header className="topbar">
+        <div className="topbar-inner">
+          <NavLink className="brand" to="/">
+            <span className="brand-mark">a</span>
+            <span>aicp</span>
+            <span className="brand-dot">.</span>
+          </NavLink>
+          <div className="topbar-caption">Your attention, considered.</div>
+          <nav className="main-navigation" aria-label="Main navigation">
+            {navigation.map(([path, label, icon]) => (
+              <NavLink end={path === "/"} key={path} to={path}>
+                <span aria-hidden="true">{icon}</span>
+                {label}
+              </NavLink>
+            ))}
+          </nav>
+          <div className="topbar-actions">
+            <div className="topbar-status">
+              <span
+                className={status.isError ? "status-dot offline" : "status-dot"}
+              />
+              <span className="status-label">
+                {status.isError
+                  ? "Server unavailable"
+                  : status.data
+                    ? "Local workspace"
+                    : "Connecting…"}
+              </span>
+            </div>
+            <NavLink className="preferences-link" to="/preferences">
+              Preferences
             </NavLink>
-          ))}
-        </nav>
-        <div className="connection">
-          <span
-            className={status.isError ? "status-dot offline" : "status-dot"}
-          />
-          {status.isError
-            ? "Server unavailable"
-            : status.data
-              ? "Local workspace"
-              : "Connecting…"}
-          <small>Private by design. Yours to keep.</small>
+          </div>
         </div>
-      </aside>
+      </header>
       <main>
         {status.isError && (
           <Alert severity="warning">
@@ -244,6 +205,7 @@ function Portal() {
           <Route path="/interests" element={<Interests />} />
           <Route path="/library" element={<Library />} />
           <Route path="/activity" element={<Activity />} />
+          <Route path="/preferences" element={<Preferences />} />
           <Route path="/items/:id" element={<ItemDetail />} />
           <Route
             path="*"

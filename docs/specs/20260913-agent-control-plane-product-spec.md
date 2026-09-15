@@ -116,7 +116,7 @@ The user starts `aicp serve`, opens the portal with `aicp open`, and gives the h
 
 The harness creates an Interest and the required Watches. The portal also offers simple forms to inspect and edit those records. It shows the concrete sources and inspection intervals before the first run.
 
-The initial setup asks for the display timezone, prefilled from the browser where available. Persist the selection; use UTC until selected. The first adopter's expected setting is `Asia/Singapore`.
+The separate Preferences screen asks for the display timezone and defaults to the browser/system timezone. Persist an explicit IANA selection, while retaining browser-default mode until the user chooses one. The first adopter's expected setting is `Asia/Singapore`.
 
 Installing MCP or setting a Watch interval must not display “monitoring is running.” Show “No agent run received yet” until a runner actually connects.
 
@@ -196,14 +196,14 @@ Another agent reads the Item's context and sources by ID. The Control Plane pres
 
 ## 6. Portal structure
 
-Use four top-level destinations:
+Use compact top navigation for the four top-level destinations; do not reserve a persistent sidebar for them:
 
 | Page | Purpose |
 | --- | --- |
-| Attention | Due reminders, open Todos, unacknowledged updates, and pending proposals; show each item once with relevant badges. |
+| Attention | Metric-bearing outcomes first, then due reminders, open Todos, unacknowledged updates, and pending proposals; show each item once with relevant badges and direct actions. |
 | Interests | Interests, nested Watches, simple editing, lifecycle actions, proposed changes, and source freshness. |
 | Library | All items; filters for reports, tasks, outcomes, Todo/Done, Interest, and text; detail and history. |
-| Activity | Recent runs, source coverage, failures, and user/agent changes; small settings area. |
+| Activity | Recent runs, source coverage, failures, and user/agent changes. Preferences is a separate destination for display timezone and agent contexts. |
 
 A stable item detail shell shows title, kind, current local state, reminder, sources, content timestamp, last successful inspection, generated body, user note, and history. Observed source status is explained in the generated body.
 

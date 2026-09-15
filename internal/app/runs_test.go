@@ -38,9 +38,10 @@ func TestRunLeaseSelectionAndChangeAcknowledgement(t *testing.T) {
 	var started struct {
 		Run   Run `json:"run"`
 		Brief struct {
-			Watches []SelectedWatch `json:"watches"`
-			After   int64           `json:"after_seq"`
-			Through int64           `json:"through_seq"`
+			Watches  []SelectedWatch   `json:"watches"`
+			After    int64             `json:"after_seq"`
+			Through  int64             `json:"through_seq"`
+			Contexts map[string]string `json:"contexts"`
 		} `json:"brief"`
 	}
 	if err = json.Unmarshal(raw, &started); err != nil {
@@ -48,6 +49,9 @@ func TestRunLeaseSelectionAndChangeAcknowledgement(t *testing.T) {
 	}
 	if len(started.Brief.Watches) != 1 || started.Brief.Watches[0].ID != watch.ID || started.Brief.Watches[0].IntervalSeconds != 7200 || started.Brief.Watches[0].LookbackSeconds != 604800 || started.Brief.Through != 2 {
 		t.Fatalf("bad captured brief: %+v", started)
+	}
+	if started.Brief.Contexts["AGENTS.md"] == "" || started.Brief.Contexts["USER.md"] == "" {
+		t.Fatalf("agent contexts missing from captured brief: %+v", started.Brief.Contexts)
 	}
 	if _, err = a.StartRun(ctx, StartRun{RequestID: "overlap", RunnerLabel: "other"}); err == nil {
 		t.Fatal("allowed overlapping run")

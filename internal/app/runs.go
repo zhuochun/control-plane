@@ -249,6 +249,10 @@ func (a *App) StartRun(ctx context.Context, input StartRun) (json.RawMessage, er
 		if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq),0) FROM events`).Scan(&through); err != nil {
 			return nil, err
 		}
+		settings, err := readSettings(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
 		id := uuid.NewString()
 		selectedJSON, _ := json.Marshal(selected)
 		lease := now.Add(runLease)
@@ -260,7 +264,10 @@ func (a *App) StartRun(ctx context.Context, input StartRun) (json.RawMessage, er
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"run": run, "brief": map[string]any{"watches": selected, "after_seq": after, "through_seq": through, "more_due_count": more}}, nil
+		return map[string]any{"run": run, "brief": map[string]any{
+			"watches": selected, "after_seq": after, "through_seq": through, "more_due_count": more,
+			"contexts": map[string]string{"AGENTS.md": settings.agentsMD, "USER.md": settings.userMD},
+		}}, nil
 	})
 }
 
@@ -403,6 +410,10 @@ func (a *App) Brief(ctx context.Context) (map[string]any, error) {
 	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq),0) FROM events`).Scan(&through); err != nil {
 		return nil, err
 	}
+	settings, err := readSettings(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
 	if err = tx.Commit(); err != nil {
 		return nil, err
 	}
@@ -418,7 +429,7 @@ func (a *App) Brief(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"now": now, "watches": selected, "more_due_count": more, "changes": map[string]int64{"after_seq": after, "through_seq": through}, "attention_items": attention, "health": health}, nil
+	return map[string]any{"now": now, "watches": selected, "more_due_count": more, "changes": map[string]int64{"after_seq": after, "through_seq": through}, "attention_items": attention, "contexts": map[string]string{"AGENTS.md": settings.agentsMD, "USER.md": settings.userMD}, "health": health}, nil
 }
 
 type WatchHealth struct {

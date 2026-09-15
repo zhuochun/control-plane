@@ -112,10 +112,10 @@ Listen: 127.0.0.1:7331
 Data directory: os.UserConfigDir()/control-plane
 Override: --data-dir or AICP_DATA_DIR
 Client base URL: --server or AICP_SERVER_URL
-Settings timezone: UTC until selected in UI
+Settings timezone: browser/system default until an explicit IANA timezone is selected
 ```
 
-Persist settings, including the display timezone, in SQLite. Include Go `time/tzdata` so named timezones work without relying on a separately installed zoneinfo database.
+Persist settings, including the display timezone mode and the two agent-facing Markdown contexts (`AGENTS.md` and `USER.md`), in SQLite. Include Go `time/tzdata` so named timezones work without relying on a separately installed zoneinfo database.
 
 Core lifecycle commands:
 
@@ -209,9 +209,9 @@ For interactive debugging and the fixture demo, `aicp run start --watch <id> --f
 
 ### 5.2 Brief and run start
 
-`GET /api/v1/brief` is read-only. It returns eligible Watch summaries, pending human/config changes, open related items, reminders, and operational health. Large reports are referenced by ID, not embedded by default.
+`GET /api/v1/brief` is read-only. It returns eligible Watch summaries, pending human/config changes, open related items, reminders, the current `AGENTS.md` and `USER.md` text contexts, and operational health. Large reports are referenced by ID, not embedded by default.
 
-`POST /api/v1/runs` registers work and returns the authoritative run brief: selected Watch IDs and revisions, source cursors, relevant context IDs, and an event range `(after_seq, through_seq]` captured at run start. Default selection is up to 20 eligible Watches; return `more_due_count`, not silent truncation. Events are pageable within the captured range.
+`POST /api/v1/runs` registers work and returns the authoritative run brief: selected Watch IDs and revisions, source cursors, the current `AGENTS.md` and `USER.md` text contexts, and an event range `(after_seq, through_seq]` captured at run start. Default selection is up to 20 eligible Watches; return `more_due_count`, not silent truncation. Events are pageable within the captured range.
 
 Capture each selected Watch's parent Interest ID, revision, and instructions in the same transaction. Publication checks the current parent revision against this server-held snapshot as well as checking the Watch revision. Any intervening Interest edit returns `409 interest_changed` and commits no items or checkpoint. Interest edits increment its revision; instruction changes or reactivation make its active Watches due now without clearing their source cursors. This prevents a previously completed Watch from delaying inspection under the revised instructions. Pausing/deprecating still makes the Watches ineligible. No extra client-supplied Interest revision is needed in each publication.
 
@@ -320,7 +320,7 @@ These are transport contracts, not new SQL fields. All mutation bodies contain `
 | User note | `expected_state_version`, `user_note` (empty text clears). |
 | Propose change | `proposal_key`, `target_type`, `operation`, `rationale_md`; create uses `payload` with creation fields and no target ID/revision; update uses `target_id`, `expected_revision`, and an editable-fields `payload`; deprecate uses target ID/revision without payload. |
 | Resolve proposal | `resolution` is `accepted` or `rejected`. The pending-to-resolved transition is atomic; repeat same resolution returns the resolved record, opposite resolution conflicts. Acceptance checks the proposal's stored target revision. |
-| Settings | `timezone` (valid IANA name); no internal keys. This single display preference uses last committed write wins, unlike versioned Interest/Watch configuration. |
+| Settings | `timezone` (`browser` or a valid IANA name), `agents_md`, and `user_md`; internal timezone storage keys are not exposed. These preferences use last committed write wins, unlike versioned Interest/Watch configuration. |
 
 An item action is one of `{type: set_todo, state: none|todo|done}`, `{type: clear_reminder}`, `{type: acknowledge, content_version}`, or `{type: set_reminder, date, time?, timezone, utc_offset?}`. These are shape notations; actual JSON strings must be quoted. Acknowledge requires `1 <= content_version <= current_content_version` and advances acknowledgement monotonically. The reminder fields follow section 7. `open_link` is navigation and has no mutation endpoint. Generated reminder descriptors contain no date: the fixed editor constructs the mutation body.
 

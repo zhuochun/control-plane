@@ -7,7 +7,7 @@ import (
 )
 
 func TestHandlerServesRootAndKnownClientRoutes(t *testing.T) {
-	for _, path := range []string{"/", "/interests", "/items/example"} {
+	for _, path := range []string{"/", "/interests", "/library", "/activity", "/preferences", "/items/example"} {
 		request := httptest.NewRequest(http.MethodGet, path, nil)
 		response := httptest.NewRecorder()
 		Handler().ServeHTTP(response, request)

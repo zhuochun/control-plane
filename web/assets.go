@@ -30,7 +30,7 @@ func Handler() http.Handler {
 			http.NotFound(w, r)
 			return
 		}
-		if r.URL.Path == "/activity" || r.URL.Path == "/interests" || r.URL.Path == "/library" || strings.HasPrefix(r.URL.Path, "/items/") {
+		if r.URL.Path == "/activity" || r.URL.Path == "/interests" || r.URL.Path == "/library" || r.URL.Path == "/preferences" || strings.HasPrefix(r.URL.Path, "/items/") {
 			data, _ := fs.ReadFile(root, "index.html")
 			w.Header().Set("Content-Type", "text/html; charset=utf-8")
 			_, _ = w.Write(data)
