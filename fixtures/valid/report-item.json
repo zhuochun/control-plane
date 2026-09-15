@@ -1,0 +1,26 @@
+{
+  "request_id": "fixture-report-create-v1",
+  "dedupe_key": "fixture:slack:rollout-thread",
+  "expected_content_version": 0,
+  "kind": "report",
+  "title": "Confirm the migration rollout sequence",
+  "summary": "The thread asks for a decision on rollout order; no decision has been observed.",
+  "sources": [
+    {
+      "id": "thread",
+      "url": "https://example.slack.com/archives/C_PLATFORM/p1789264800000001",
+      "label": "Migration discussion",
+      "observed_at": "2026-09-13T02:04:00Z"
+    }
+  ],
+  "context_md": "Confirmed: a rollout decision is outstanding. Next check: inspect replies in this thread.",
+  "report": {
+    "schema_version": 1,
+    "body_md": "## What changed\nThe proposed order changed after the dependency review. Source status: open; no decision was observed in the linked thread.\n\n| Option | Trade-off |\n| --- | --- |\n| Small cohort first | Slower expansion, easier validation |\n| Full cohort | Faster expansion, larger validation surface |\n\n## Suggested next step\nRead the options and reply in the original thread.",
+    "actions": [
+      {"id": "open-thread", "type": "open_link", "label": "Open Slack thread", "source_ref": "thread"},
+      {"id": "todo", "type": "set_todo", "label": "Set Todo", "state": "todo"},
+      {"id": "remind", "type": "set_reminder", "label": "Remind me"}
+    ]
+  }
+}

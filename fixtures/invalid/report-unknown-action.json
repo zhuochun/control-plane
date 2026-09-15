@@ -1,0 +1,14 @@
+{
+  "request_id": "fixture-invalid-action",
+  "dedupe_key": "fixture:invalid:action",
+  "expected_content_version": 0,
+  "kind": "report",
+  "title": "Invalid report",
+  "summary": "This fixture must be rejected.",
+  "sources": [],
+  "report": {
+    "schema_version": 1,
+    "body_md": "Invalid action below.",
+    "actions": [{"id": "run", "type": "run_script", "label": "Run it"}]
+  }
+}

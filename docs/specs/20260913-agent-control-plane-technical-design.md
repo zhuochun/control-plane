@@ -500,7 +500,7 @@ HTTP/CLI/MCP tests assert consistent result/error contracts. MCP tests perform r
 
 Playwright tests exercise the product acceptance IDs, particularly source navigation, setting Todo, choosing/clearing reminders, Done/reopen, reload persistence, new report versions retaining state, stale Watch health, proposals, and fallback report rendering. Mock external source content, not the local application API. [Playwright](https://playwright.dev/docs/intro)
 
-Shared valid and invalid JSON fixtures must be checked against the committed JSON schemas and both frontend/backend validators. Browser tests must demonstrate that clicking generated actions changes persisted state through the same route as ordinary controls.
+Shared valid and invalid JSON fixtures must be checked against the committed JSON schemas and the authoritative backend validator. The frontend renders only server-validated report data; duplicating the schema validator in the browser is outside P0. Browser tests must demonstrate that report content renders and actions change persisted state through the same route as ordinary controls.
 
 ### 12.2 Build and package checks
 

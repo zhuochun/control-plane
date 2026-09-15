@@ -1,0 +1,61 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aicp.local/schemas/watch-result-v1.schema.json",
+  "title": "aicp Watch result v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["request_id", "expected_watch_revision", "status", "coverage", "items"],
+  "properties": {
+    "request_id": {"type": "string", "minLength": 1},
+    "expected_watch_revision": {"type": "integer", "minimum": 1},
+    "status": {"enum": ["success", "partial", "failed"]},
+    "error": {"type": "string"},
+    "coverage": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["cursor_before", "observed_through", "limitations"],
+      "properties": {
+        "cursor_before": true,
+        "cursor_after": true,
+        "observed_through": {"type": "string", "format": "date-time"},
+        "limitations": {"type": "array", "items": {"type": "string"}}
+      }
+    },
+    "items": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/item"}
+    }
+  },
+  "$defs": {
+    "source": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "url", "label", "observed_at"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "url": {"type": "string", "format": "uri"},
+        "label": {"type": "string", "minLength": 1},
+        "observed_at": {"type": "string", "format": "date-time"}
+      }
+    },
+    "item": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["dedupe_key", "expected_content_version", "kind", "title", "summary", "sources", "report"],
+      "properties": {
+        "dedupe_key": {"type": "string", "minLength": 1},
+        "expected_content_version": {"type": "integer", "minimum": 0},
+        "kind": {"enum": ["note", "report", "task", "outcome"]},
+        "title": {"type": "string", "minLength": 1},
+        "summary": {"type": "string", "minLength": 1},
+        "sources": {"type": "array", "items": {"$ref": "#/$defs/source"}},
+        "context_md": {"type": "string"},
+        "interest_id": {"type": "string"},
+        "watch_id": {"type": "string"},
+        "parent_id": {"type": "string"},
+        "initial_todo_state": {"enum": ["none", "todo", "done"]},
+        "report": {"$ref": "report-v1.schema.json"}
+      }
+    }
+  }
+}

@@ -1,0 +1,65 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://aicp.local/schemas/report-v1.schema.json",
+  "title": "aicp report v1",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "body_md"],
+  "properties": {
+    "schema_version": {"const": 1},
+    "body_md": {"type": "string"},
+    "actions": {
+      "type": "array",
+      "items": {"$ref": "#/$defs/action"},
+      "default": []
+    }
+  },
+  "$defs": {
+    "baseAction": {
+      "type": "object",
+      "required": ["id", "type", "label"],
+      "properties": {
+        "id": {"type": "string", "minLength": 1},
+        "type": {"type": "string"},
+        "label": {"type": "string", "minLength": 1}
+      }
+    },
+    "action": {
+      "oneOf": [
+        {
+          "allOf": [{"$ref": "#/$defs/baseAction"}],
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "label", "source_ref"],
+          "properties": {
+            "id": {"type": "string", "minLength": 1},
+            "type": {"const": "open_link"},
+            "label": {"type": "string", "minLength": 1},
+            "source_ref": {"type": "string", "minLength": 1}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "label", "state"],
+          "properties": {
+            "id": {"type": "string", "minLength": 1},
+            "type": {"const": "set_todo"},
+            "label": {"type": "string", "minLength": 1},
+            "state": {"enum": ["none", "todo", "done"]}
+          }
+        },
+        {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["id", "type", "label"],
+          "properties": {
+            "id": {"type": "string", "minLength": 1},
+            "type": {"enum": ["set_reminder", "clear_reminder", "acknowledge"]},
+            "label": {"type": "string", "minLength": 1}
+          }
+        }
+      ]
+    }
+  }
+}
