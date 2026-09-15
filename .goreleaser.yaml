@@ -1,0 +1,44 @@
+version: 2
+project_name: aicp
+
+before:
+  hooks:
+    - npm --prefix web ci
+    - npm --prefix web run build
+    - go test ./...
+
+builds:
+  - id: aicp
+    main: ./cmd/aicp
+    binary: aicp
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X main.version={{.Version}}
+    goos: [darwin, linux, windows]
+    goarch: [amd64, arm64]
+    ignore:
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - ids: [aicp]
+    formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - examples/*
+      - schemas/*
+
+checksum:
+  name_template: checksums.txt
+
+release:
+  draft: true
+
+changelog:
+  disable: true
