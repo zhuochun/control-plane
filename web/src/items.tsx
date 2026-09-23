@@ -279,7 +279,7 @@ function ReminderChip({ item, timezone }: { item: Item; timezone?: string }) {
   );
 }
 
-function useItemAction(itemId: string, onSuccess?: () => void) {
+export function useItemAction(itemId: string, onSuccess?: () => void) {
   const cache = useQueryClient();
   const request = useRef<{ signature: string; id: string } | null>(null);
   const mutation = useMutation({
@@ -437,7 +437,7 @@ function OutcomeCard({ item, timezone }: { item: Item; timezone?: string }) {
   );
 }
 
-function ProposalCard({ proposal }: { proposal: Proposal }) {
+export function ProposalCard({ proposal }: { proposal: Proposal }) {
   const cache = useQueryClient();
   const request = useRef<{ resolution: string; id: string } | null>(null);
   const resolve = useMutation({
@@ -797,7 +797,7 @@ export function Library() {
   );
 }
 
-function ReminderDialog({
+export function ReminderDialog({
   close,
   apply,
   error,

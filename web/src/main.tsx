@@ -10,7 +10,8 @@ import { Alert, CssBaseline, ThemeProvider, createTheme } from "@mui/material";
 import "./style.css";
 import { api, collection } from "./api";
 import { Interests } from "./interests";
-import { Attention, ItemDetail, Library } from "./items";
+import { ItemDetail } from "./items";
+import { ItemWorkspace } from "./workspace";
 import { Preferences } from "./preferences";
 import { formatDateTime, useSettings } from "./settings";
 
@@ -151,10 +152,21 @@ function Portal() {
     queryKey: ["status"],
     queryFn: () => api<{ version: string; database: string }>("/status"),
   });
+  const navigationCounts = useQuery({
+    queryKey: ["items", "navigation"],
+    queryFn: async () => {
+      const [all, attention] = await Promise.all([
+        collection<{ todo_state: string }>("/items?view=all"),
+        collection<unknown>("/items?view=attention"),
+      ]);
+      return { all: all.length, attention: attention.length, todo: all.filter((item) => item.todo_state === "todo").length };
+    },
+  });
   const navigation = [
     ["/", "Attention", "◉"],
-    ["/interests", "Interests", "✳"],
-    ["/library", "Library", "▤"],
+    ["/todos", "Todos", "✓"],
+    ["/interests", "Monitoring", "✳"],
+    ["/library", "All items", "▤"],
     ["/activity", "Activity", "↗"],
   ];
   return (
@@ -172,6 +184,9 @@ function Portal() {
               <NavLink end={path === "/"} key={path} to={path}>
                 <span aria-hidden="true">{icon}</span>
                 {label}
+                {path === "/" && <span className="navigation-count">{navigationCounts.data?.attention ?? ""}</span>}
+                {path === "/todos" && <span className="navigation-count">{navigationCounts.data?.todo ?? ""}</span>}
+                {path === "/library" && <span className="navigation-count">{navigationCounts.data?.all ?? ""}</span>}
               </NavLink>
             ))}
           </nav>
@@ -201,9 +216,10 @@ function Portal() {
           </Alert>
         )}
         <Routes>
-          <Route path="/" element={<Attention />} />
+          <Route path="/" element={<ItemWorkspace mode="attention" />} />
+          <Route path="/todos" element={<ItemWorkspace mode="todo" />} />
           <Route path="/interests" element={<Interests />} />
-          <Route path="/library" element={<Library />} />
+          <Route path="/library" element={<ItemWorkspace mode="library" />} />
           <Route path="/activity" element={<Activity />} />
           <Route path="/preferences" element={<Preferences />} />
           <Route path="/items/:id" element={<ItemDetail />} />
