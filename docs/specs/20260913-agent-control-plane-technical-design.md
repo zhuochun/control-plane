@@ -158,7 +158,7 @@ The table list separates durable operational responsibilities; it is not an inst
 | `items` | ID, globally unique dedupe key, kind, optional Interest/Watch/parent IDs, title/summary, current content JSON, content version/hash, `todo_state`, `remind_at`, reminder timezone, acknowledged content version, `user_note`, state version, created/content-updated/state-updated timestamps. Columns support identity, filtering, navigation, no-op detection, and independent user actions. Content JSON owns report, sources, and optional context; no duplicate body/context/status columns. |
 | `item_versions` | Immutable snapshots of substantive item content by item ID and content version. |
 | `proposals` | ID, unique proposal key, target type/ID, expected target revision, operation, configuration payload, one `rationale_md` containing reason and evidence links, resolution state. Payload reuses the minimal Interest/Watch configuration contract. |
-| `runs` | ID, runner label, status, start/end/lease expiry, selected Watch and parent Interest revisions, brief event watermarks, summary. |
+| `runs` | ID, runner label, status, start/end times, selected Watch and parent Interest revisions, brief event watermarks, summary. The retained `lease_expires_at` column is legacy and unused. |
 | `watch_results` | Run/Watch IDs (unique pair), status, recorded timestamp, bounded result JSON containing coverage, error text, and item IDs. Supports per-Watch health and run completion; retry responses belong only in `command_receipts`. |
 | `events` | Monotonic sequence, timestamp, actor label, entity, change type, and compact payload. |
 | `command_receipts` | Unique request ID, normalized body hash, response; implements retry idempotency. |
@@ -183,7 +183,7 @@ Agent-owned content includes the title, summary, report body, source references,
 
 Use normalized content hashing for no-op detection. Exclude last-inspection timestamps and run metadata from the substantive hash; keep them as freshness metadata. Normalize ordered versus unordered collections deliberately. An unchanged item creates neither a new content version nor an unacknowledged update. An agent should also avoid gratuitous paraphrasing when source content has not changed.
 
-Specifically exclude `sources[].observed_at` from the substantive hash. A valid publication with otherwise identical content updates these timestamps in the current content JSON without changing `content_version`, `content_updated_at`, acknowledgement, or immutable history; its Watch-result record still records the inspection. For a retained source ID, keep the later observation instant. Historical snapshots retain the observation times present when created. Source IDs/URLs/labels, title, summary, kind, relationships, context, Markdown, and actions remain substantive. Canonicalize JSON object keys and source order by source ID; preserve Markdown text and action order. Treat omitted actions as `[]` and omitted context as empty text. No-op detection does not bypass revision or lease checks.
+Specifically exclude `sources[].observed_at` from the substantive hash. A valid publication with otherwise identical content updates these timestamps in the current content JSON without changing `content_version`, `content_updated_at`, acknowledgement, or immutable history; its Watch-result record still records the inspection. For a retained source ID, keep the later observation instant. Historical snapshots retain the observation times present when created. Source IDs/URLs/labels, title, summary, kind, relationships, context, Markdown, and actions remain substantive. Canonicalize JSON object keys and source order by source ID; preserve Markdown text and action order. Treat omitted actions as `[]` and omitted context as empty text. No-op detection does not bypass revision or active-run checks.
 
 Deduplication keys identify the continuing matter, not the run or current summary. Example: `slack:T_EXAMPLE:C_PLATFORM:thread:1726000000.000001`. Include stable workspace/account/source identity to avoid collisions; do not rely on the display title. A new version of the same thread uses the same key.
 
@@ -191,7 +191,7 @@ Deduplication keys identify the continuing matter, not the run or current summar
 
 All mutating requests include `request_id`; the CLI generates one unless supplied, and callers reuse it for retries. Persist its body hash and response with the mutation. Identical repeats return the stored response; reusing the ID with a different body returns `409 idempotency_conflict`.
 
-Check an existing receipt before checking current lease/version state, so retrying a previously committed request still succeeds after its run has finished. Do not automatically retry a failed mutation with a newly generated request ID.
+Check an existing receipt before checking current run/version state, so retrying a previously committed request still succeeds after its run has finished. Do not automatically retry a failed mutation with a newly generated request ID.
 
 User-state commands require `expected_state_version`; content updates require `expected_content_version` when updating an existing item; config updates require `expected_revision`. A new item uses expected content version zero and a unique dedupe key. An unexpected existing item returns its ID/version as a conflict for reread, rather than being overwritten.
 
@@ -215,7 +215,7 @@ For interactive debugging and the fixture demo, `aicp run start --watch <id> --f
 
 Capture each selected Watch's parent Interest ID, revision, and instructions in the same transaction. Publication checks the current parent revision against this server-held snapshot as well as checking the Watch revision. Any intervening Interest edit returns `409 interest_changed` and commits no items or checkpoint. Interest edits increment its revision; instruction changes or reactivation make its active Watches due now without clearing their source cursors. This prevents a previously completed Watch from delaying inspection under the revised instructions. Pausing/deprecating still makes the Watches ineligible. No extra client-supplied Interest revision is needed in each publication.
 
-P0 has one active periodic run globally. Serialize start in a transaction, expire any overdue lease, then acquire the run. A competing start receives `409 run_in_progress`. Use a 30-minute lease and a renew command for longer analyses. The lease is durable; late publications from an expired run are rejected.
+P0 has one active periodic run globally. Serialize start in a transaction; a competing start receives `409 run_in_progress`. Runs do not expire automatically. If an external agent cannot finish, the owner explicitly abandons that run by ID and records a reason. The action closes it as failed, preserves committed Watch results and checkpoints, and leaves its captured event range unacknowledged. Late submissions from the abandoned run are rejected.
 
 An actor/runner label is attribution, not authentication. Multi-runner independent scheduling and delegation leases are not part of P0.
 
@@ -223,7 +223,7 @@ An actor/runner label is attribution, not authentication. Multi-runner independe
 
 A result contains a request ID, Run/Watch IDs, expected Watch revision, coverage outcome, cursor before/after, source timestamps/limitations, and bounded item upserts. A publication can include zero items for a successful no-change scan.
 
-Publish a successful Watch result atomically: validate lease and Watch revision, validate items, save content versions/events, record coverage, advance that Watch's cursor and due time, and save the receipt. P0 permits one final result per Run/Watch pair.
+Publish a successful Watch result atomically: validate the active run and Watch revision, validate items, save content versions/events, record coverage, advance that Watch's cursor and due time, and save the receipt. P0 permits one final result per Run/Watch pair.
 
 For `partial` or `failed`, record the attempt and error/limitations but do not advance the successful cursor. A failed result contains no item upserts. Partial findings may be saved only if explicitly marked partial in their content; they never imply full source coverage. A later run may reread the same window; item deduplication makes replay harmless.
 
@@ -254,7 +254,7 @@ If Watch configuration changed after the brief, return `409 watch_changed`; do n
 
 ### 5.4 Finish and acknowledge changes
 
-Finish closes the run and records a summary. All selected Watches succeeding yields `completed`; at least one success or partial result with other unsuccessful/missing work yields `partial`; otherwise use `failed`. A missing result is not a success. A zero-Watch run may complete after processing its captured changes. An abandoned run eventually becomes `expired`.
+Finish closes the run and records a summary. All selected Watches succeeding yields `completed`; at least one success or partial result with other unsuccessful work yields `partial`; otherwise use `failed`. Missing results block normal finish. A zero-Watch run may complete after processing its captured changes. The owner can explicitly abandon an interrupted run; it closes as failed without requiring missing Watch results.
 
 `ack_through_seq` may advance the singleton change cursor only after the agent has consumed that event range and durably recorded any resulting work/context. It cannot exceed the run's captured `through_seq`, and cannot skip an unconsumed page. A failed run defaults to no cursor advance.
 
@@ -270,8 +270,8 @@ The HTTP prefix is `/api/v1`. IDs in examples are illustrative. Preserve shared 
 | `GET /brief`, `GET /changes?after_seq=&through_seq=` | `brief`, `changes` | Bounded, pageable reads. |
 | `GET /runs`, `GET /runs/{id}` | `run list/get` | History, selected work, and per-Watch results. |
 | `POST /runs` | `run start` | Register/claim; never spawn an agent. |
-| `POST /runs/{id}/renew` | `run renew` | Extend a live lease. |
-| `PUT /runs/{id}/watches/{watch}/result` | `run publish --file ...` | Atomic result and checkpoint. |
+| `POST /runs/{id}/abandon` | `run abandon <id> --reason ...` | Owner recovery; preserves committed results and change replay. |
+| `PUT /runs/watches/{watch}/findings` | `run submit <watch> --file ...` | Atomic result and checkpoint for the active run. |
 | `POST /runs/{id}/finish` | `run finish` | Close run and optionally acknowledge captured changes. |
 | `GET/POST /interests`, `GET/PATCH /interests/{id}` | `interest list/get/create/update` | Config revisions; no delete needed. |
 | `GET/POST /watches`, `GET/PATCH /watches/{id}` | `watch list/get/create/update` | Source spec and lifecycle. |
@@ -309,8 +309,8 @@ These are transport contracts, not new SQL fields. All mutation bodies contain `
 | Operation | Body fields in addition to `request_id` |
 | --- | --- |
 | Start run | `runner_label`; optional `watch_ids` (omitted selects due Watches, `[]` selects none), `force` (default false). Force requires explicit IDs and never selects inactive Watches. Return the run and captured `brief`. |
-| Renew run | No additional fields. Extend a live lease to server now plus 30 minutes; expired/finished runs conflict. |
-| Finish run | `summary`, optional `ack_through_seq` (omission leaves cursor unchanged). Server computes status under section 5.4; expired runs cannot advance acknowledgement. |
+| Abandon run | Run ID and a reason. Owner recovery action, available through portal and CLI; no agent-facing MCP tool. Submitted results remain and captured changes are not acknowledged. |
+| Finish run | `summary`, optional `ack_through_seq` (omission leaves cursor unchanged). Server computes status under section 5.4; abandoned runs cannot advance acknowledgement. |
 | Create Interest | `title`, `instructions_md`, optional `state` (default active). |
 | Create Watch | `interest_id`, `source: {kind, locator}`, `instructions_md`, optional `interval_seconds` (7200), `lookback_seconds` (604800), `state` (active). |
 | Update Interest/Watch | `expected_revision` and changed editable fields from creation. Omitted fields are unchanged. Reject null for required configuration fields; server-owned cursor/due fields cannot be supplied. Watch parent is fixed after creation. |
@@ -328,9 +328,9 @@ An item action is one of `{type: set_todo, state: none|todo|done}`, `{type: clea
 
 `aicp mcp` runs the official SDK's stdio transport and delegates to the same typed HTTP client as the CLI. It must not open a second SQLite connection or serve the web app.
 
-Expose a small initial tool set: `get_brief`, `get_changes`, `start_run`, `renew_run`, `publish_watch_result`, `finish_run`, `get_item`, `get_context`, `propose_change`, and `apply_item_action`. Bootstrap/configuration and less frequent management remain available through the CLI. Full one-to-one MCP coverage of every CRUD endpoint is not a P0 requirement.
+Expose the heartbeat tool set: `get_brief`, `get_changes`, `start_run`, `submit_watch_findings`, `upsert_item`, `finish_run`, `get_item`, `get_context`, `propose_change`, and `apply_item_action`. Bootstrap/configuration and owner recovery remain available through the CLI and portal. Full one-to-one MCP coverage of every CRUD endpoint is not a P0 requirement.
 
-MCP reuses the HTTP request/response types above; it does not define another domain schema. `get_brief` takes `{}`; `get_changes` takes `after_seq`, `through_seq`, and optional `cursor`; `get_item` and `get_context` take `item_id` (context also accepts optional `cursor`). `start_run` and `propose_change` take their HTTP bodies directly. `renew_run` and `finish_run` add `run_id` to their HTTP bodies. `publish_watch_result` adds `run_id` and `watch_id` to the section 5.3 body. `apply_item_action` adds `item_id` to the item-action body. The adapter removes path IDs before sending HTTP. Reads return the corresponding HTTP result; mutations return the command result above. Tool failures preserve the common error code/message/details and mark the tool result as an error. Commit exact tool schemas and shared request/result fixtures with the implementation; schema generation must use these shared types.
+MCP reuses the HTTP request/response types above; it does not define another domain schema. `get_brief` accepts an optional continuation cursor; `get_changes` takes `after_seq`, `through_seq`, and optional `cursor`; `get_item` and `get_context` take `item_id` (context also accepts optional `cursor`). `start_run` and `propose_change` take their HTTP bodies directly. `finish_run` and `submit_watch_findings` may omit `run_id` for the sole active run. `submit_watch_findings` supplies `watch_id`; `upsert_item` supplies an Interest-level Item without a Watch. `apply_item_action` adds `item_id` to the item-action body. The adapter removes path IDs before sending HTTP. Reads return the corresponding HTTP result; mutations return the command result above. Tool failures preserve the common error code/message/details and mark the tool result as an error. Commit exact tool schemas and shared request/result fixtures with the implementation; schema generation must use these shared types.
 
 Use structured typed arguments/results and document each tool's effects. Stdout contains only MCP messages. The official SDK provides stdio transport and schema-aware tools; pin a tested stable tag rather than promising a particular future protocol version. [Official Go SDK](https://pkg.go.dev/github.com/modelcontextprotocol/go-sdk/mcp)
 
@@ -480,7 +480,7 @@ Implement in thin working slices; run the relevant tests at each step.
 | --- | --- | --- |
 | 1. Foundation | Go entrypoint, SQLite/migrations, HTTP client, settings, embedded SPA shell. | Fresh binary starts, persists a setting, reloads, and serves a deep link. |
 | 2. First value | Item creation, Markdown report, source links, Todo/reminder actions, Attention/Library. | Publish a Slack fixture through CLI; click link, set Todo/reminder, restart, and verify persistence. |
-| 3. External loop | Interests/Watches, brief, events, run lease, atomic publications/checkpoints. | Two fixture cycles preserve user edits and deduplicate results; no server-side agent execution exists. |
+| 3. External loop | Interests/Watches, brief, events, one active run, atomic findings/checkpoints, owner recovery. | Two fixture cycles preserve user edits and deduplicate results; no server-side agent execution exists. |
 | 4. Adaptive/context layer | Proposals, context packets, history, thin MCP adapter. | Accept/deprecate a Watch; continue from context in a new session; run MCP contract tests. |
 | 5. Delivery | Browser regression tests, external heartbeat examples, build scripts, release config, README. | All P0 scenarios pass and packaged binaries contain the complete UI. |
 
@@ -492,9 +492,9 @@ Do not stop after API scaffolding or placeholder UI. Do not expand an intermedia
 
 Backend unit tests cover report/action validation, reminder conversion and due evaluation, deduplication, content/state version separation, proposal transitions, due eligibility, and event acknowledgement boundaries. Inject time; do not sleep for reminders in tests.
 
-SQLite integration tests use a temporary file-backed database and real migrations. Exercise transaction rollback, foreign keys, restart persistence, idempotent response replay, same-key/different-body conflicts, concurrent run starts, expired lease fencing, and Watch revision changes during a run.
+SQLite integration tests use a temporary file-backed database and real migrations. Exercise transaction rollback, foreign keys, restart persistence, idempotent response replay, same-key/different-body conflicts, concurrent run starts, deliberate abandonment and late-result fencing, and Watch revision changes during a run.
 
-The critical failure-injection test crashes/fails between logical publication steps: after restart, item updates and source checkpoints must either both exist or both be absent. Include a receipt replay after run completion to verify receipt lookup precedes lease checks.
+The critical failure-injection test crashes/fails between logical publication steps: after restart, item updates and source checkpoints must either both exist or both be absent. Include a receipt replay after run completion to verify receipt lookup precedes live-state checks.
 
 HTTP/CLI/MCP tests assert consistent result/error contracts. MCP tests perform real initialize/list-tools/tool-call exchanges over the SDK transport. A small subprocess test verifies that stderr logging does not corrupt stdout MCP or CLI JSON.
 

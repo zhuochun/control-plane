@@ -43,10 +43,11 @@ The user-facing vocabulary is `aicp run start` and `aicp run finish`. The
 agent-facing MCP names remain `start_run` and `finish_run`. There is at most one
 active run globally.
 
-This is a local, single-user MVP. It assumes that a started run completes
-normally. Crash recovery, cross-run ownership, and replay after a lost
-response are outside this heartbeat contract and must not become additional
-agent steps.
+This is a local, single-user MVP. A started run normally completes. If the
+external agent stops, the owner may explicitly abandon that run from Activity
+or the CLI, with a reason. This is an operator recovery action, never an
+additional agent heartbeat step. Cross-run ownership and replay after a lost
+response remain outside this heartbeat contract.
 
 ## 2. Current behavior and change boundary
 
@@ -152,6 +153,11 @@ completion.
 
 There is no agent-facing lease, renewal, or crash-recovery workflow. The agent
 does not receive a lease expiry and does not call `renew_run`.
+The owner can see the active run's start time and submitted Watch count, then
+abandon that specific run if it cannot finish. Successful Watch checkpoints
+already committed remain; unreported Watches remain due and captured changes
+are offered again. Activity also shows total due Watches so a 20-Watch packet
+does not imply that all due work was covered.
 
 ### 3.3 Inspect sources
 

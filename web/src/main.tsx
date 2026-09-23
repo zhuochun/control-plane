@@ -4,9 +4,12 @@ import { BrowserRouter, NavLink, Route, Routes } from "react-router";
 import {
   QueryClient,
   QueryClientProvider,
+  useMutation,
   useQuery,
+  useQueryClient,
 } from "@tanstack/react-query";
-import { Alert, CssBaseline, ThemeProvider, createTheme } from "@mui/material";
+import { Alert, Button, CssBaseline, Dialog, DialogActions, DialogContent, DialogTitle, TextField, ThemeProvider, createTheme } from "@mui/material";
+import { useState } from "react";
 import "./style.css";
 import { api, collection } from "./api";
 import { Interests } from "./interests";
@@ -14,6 +17,7 @@ import { ItemDetail } from "./items";
 import { ItemWorkspace } from "./workspace";
 import { Preferences } from "./preferences";
 import { formatDateTime, useSettings } from "./settings";
+import type { ServiceStatus } from "./health";
 
 type ActivityProposal = {
   id: string;
@@ -48,6 +52,25 @@ const client = new QueryClient({
 
 function Activity() {
   const settings = useSettings();
+  const cache = useQueryClient();
+  const [abandonId, setAbandonId] = useState<string | null>(null);
+  const [reason, setReason] = useState("");
+  const status = useQuery({ queryKey: ["status"], queryFn: () => api<ServiceStatus>("/status") });
+  const activeId = status.data?.health.active_run?.id;
+  const activeDetail = useQuery({
+    queryKey: ["run", activeId],
+    enabled: Boolean(activeId),
+    queryFn: () => api<{ selected_watches: { id: string; source: { kind: string; locator: string } }[]; results: { watch_id: string; status: string }[] }>(`/runs/${activeId}`),
+  });
+  const abandon = useMutation({
+    mutationFn: (input: { id: string; reason: string }) => api(`/runs/${input.id}/abandon`, { request_id: crypto.randomUUID(), reason: input.reason.trim() }, "POST"),
+    onSuccess: () => {
+      setAbandonId(null);
+      setReason("");
+      cache.invalidateQueries({ queryKey: ["status"] });
+      cache.invalidateQueries({ queryKey: ["runs"] });
+    },
+  });
   const runs = useQuery({
     queryKey: ["runs"],
     queryFn: () =>
@@ -72,6 +95,7 @@ function Activity() {
         <p>Runs, coverage, and the decisions that shape what happens next.</p>
       </header>
       <div className="activity-summary" aria-label="Activity summary">
+        <div className="summary-metric gold"><strong>{status.data?.health.due_count ?? "—"}</strong><span>Watches due</span></div>
         <div className="summary-metric blue">
           <strong>{runs.data?.length ?? "—"}</strong>
           <span>agent runs</span>
@@ -85,6 +109,18 @@ function Activity() {
           <span>workspace state</span>
         </div>
       </div>
+      {status.data?.health.active_run && <section className="panel activity-panel">
+        <div className="section-heading"><h2>Active inspection</h2><span className="tag run-running">running</span></div>
+        <p>Started {formatDateTime(status.data.health.active_run.started_at, settings.data?.timezone)}. Results received for {status.data.health.active_run.submitted_count} of {status.data.health.active_run.selected_count} selected Watches.</p>
+        {activeDetail.isPending && <p>Loading selected Watch results…</p>}
+        {activeDetail.isError && <Alert severity="error">Cannot load selected Watch results. Refresh before deciding whether to abandon this run.</Alert>}
+        {activeDetail.data && <ul>{activeDetail.data.selected_watches.map((watch) => {
+          const result = activeDetail.data.results.find((entry) => entry.watch_id === watch.id);
+          return <li key={watch.id}>{watch.source.kind}: {watch.source.locator} — {result?.status ?? "No result"}</li>;
+        })}</ul>}
+        <Button color="warning" disabled={!activeDetail.data || activeDetail.isError || activeDetail.isPending} onClick={() => setAbandonId(status.data!.health.active_run!.id)}>Abandon interrupted run</Button>
+      </section>}
+      {status.data?.health.last_run && status.data.health.last_run.status !== "running" && <p className="activity-health-note">Last run: {status.data.health.last_run.status} · {formatDateTime(status.data.health.last_run.started_at, settings.data?.timezone)}. {status.data.health.last_run.summary}</p>}
       <section className="panel activity-panel">
         <div className="section-heading">
           <h2>Agent runs</h2>
@@ -143,6 +179,15 @@ function Activity() {
             </div>
           ))}
       </section>
+      <Dialog open={abandonId !== null} onClose={() => { if (!abandon.isPending) setAbandonId(null); }} fullWidth maxWidth="sm">
+        <DialogTitle>Abandon this run?</DialogTitle>
+        <DialogContent>
+          <p>Use this when the external agent cannot finish. Submitted findings and successful checkpoints remain. Unreported Watches stay due, and captured user changes will be offered again.</p>
+          <TextField autoFocus fullWidth label="Reason" value={reason} onChange={(event) => setReason(event.target.value)} slotProps={{ htmlInput: { maxLength: 500 } }} />
+          {abandon.isError && <Alert severity="error">{abandon.error.message}</Alert>}
+        </DialogContent>
+        <DialogActions><Button onClick={() => setAbandonId(null)} disabled={abandon.isPending}>Cancel</Button><Button color="warning" disabled={!reason.trim() || abandon.isPending} onClick={() => abandonId && abandon.mutate({ id: abandonId, reason })}>Abandon run</Button></DialogActions>
+      </Dialog>
     </>
   );
 }
@@ -150,7 +195,7 @@ function Activity() {
 function Portal() {
   const status = useQuery({
     queryKey: ["status"],
-    queryFn: () => api<{ version: string; database: string }>("/status"),
+    queryFn: () => api<ServiceStatus>("/status"),
   });
   const navigationCounts = useQuery({
     queryKey: ["items", "navigation"],

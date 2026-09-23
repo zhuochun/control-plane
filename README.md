@@ -11,13 +11,14 @@ scheduling stay outside aicp.
 
 ## Domain model
 
-The core relationship is:
+The durable configuration and work relationships are:
 
 ```text
 Interest = why it matters
     └── Watch = where and how to inspect it
-          └── Agent run = one external inspection attempt
-                └── Items = findings, reports, tasks, and outcomes
+Agent run = one inspection attempt across up to 20 due Watches
+Item = a durable finding tied to an Interest, optionally to a Watch;
+       later runs can update the same Item
 ```
 
 An **Interest** is the durable purpose: a title, free-form instructions, and
@@ -103,6 +104,9 @@ inspect sources:
 4. Call `finish_run` only after every selected Watch has a terminal result.
    Successful coverage advances the Watch checkpoint and next due time; failed
    or partial coverage remains eligible for a later run.
+   If the external agent cannot finish, review the active run in Activity and
+   explicitly abandon it with a reason. Submitted findings and successful
+   checkpoints remain; unreported Watches stay due and captured changes replay.
 5. Review the resulting Attention items. You can open sources, acknowledge
    findings, set Todo or Done, add reminders, and accept or reject proposals.
    The next run receives those local changes as context.
@@ -110,6 +114,9 @@ inspect sources:
 The server does not promise that an inspection is running merely because a
 Watch exists. Until an external runner connects, the portal reports that no
 agent run has been received.
+Monitoring shows each active Watch's latest inspection and next due time;
+Activity shows the active run and the number of due Watches. Due work beyond
+the 20-Watch run limit remains visible for a later heartbeat.
 
 ## Demo and verification
 

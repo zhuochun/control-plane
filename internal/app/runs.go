@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"strconv"
+	"strings"
 	"time"
 
 	"github.com/google/uuid"
@@ -75,6 +76,10 @@ type FinishRun struct {
 	RequestID     string `json:"request_id"`
 	Summary       string `json:"summary"`
 	AckThroughSeq *int64 `json:"ack_through_seq,omitempty"`
+}
+type AbandonRun struct {
+	RequestID string `json:"request_id"`
+	Reason    string `json:"reason"`
 }
 
 func scanRun(row scanner) (Run, error) {
@@ -558,6 +563,34 @@ func (a *App) FinishRun(ctx context.Context, id string, input FinishRun) (json.R
 	})
 }
 
+// AbandonRun releases a run that its external agent can no longer finish.
+// Submitted results and successful Watch checkpoints remain durable; the
+// captured event range is deliberately left unacknowledged for the next run.
+func (a *App) AbandonRun(ctx context.Context, id string, input AbandonRun) (json.RawMessage, error) {
+	return a.mutate(ctx, input.RequestID, "POST /runs/"+id+"/abandon", input, func(tx *sql.Tx) (any, error) {
+		reason := strings.TrimSpace(input.Reason)
+		if len(reason) == 0 || len(reason) > 500 {
+			return nil, Invalid("reason must contain 1 to 500 characters")
+		}
+		run, err := getRun(ctx, tx, id)
+		if err != nil {
+			return nil, err
+		}
+		if err = liveRun(run); err != nil {
+			return nil, err
+		}
+		summary := "Abandoned by owner: " + reason
+		_, err = tx.ExecContext(ctx, `UPDATE runs SET status='failed',ended_at=?,summary=? WHERE id=?`, a.Now().UTC().UnixMilli(), summary, run.ID)
+		if err != nil {
+			return nil, err
+		}
+		if err = a.event(ctx, tx, "user", "run", run.ID, "run.abandoned", map[string]any{"reason": reason}); err != nil {
+			return nil, err
+		}
+		return getRun(ctx, tx, run.ID)
+	})
+}
+
 type Event struct {
 	Seq        int64           `json:"seq"`
 	OccurredAt time.Time       `json:"occurred_at"`
@@ -771,10 +804,17 @@ func (a *App) BriefPage(ctx context.Context, cursor string) (map[string]any, err
 
 type WatchHealth struct {
 	WatchID       string     `json:"watch_id"`
+	NextDueAt     time.Time  `json:"next_due_at"`
 	LastStatus    string     `json:"last_status,omitempty"`
 	LastAttemptAt *time.Time `json:"last_attempt_at,omitempty"`
 	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
 	LastError     string     `json:"last_error,omitempty"`
+}
+type ActiveRunHealth struct {
+	ID             string    `json:"id"`
+	StartedAt      time.Time `json:"started_at"`
+	SelectedCount  int       `json:"selected_count"`
+	SubmittedCount int       `json:"submitted_count"`
 }
 type LastRunHealth struct {
 	ID        string     `json:"id"`
@@ -786,7 +826,8 @@ type LastRunHealth struct {
 
 func (a *App) OperationalHealth(ctx context.Context) (map[string]any, error) {
 	var lastRun any
-	run, err := scanRun(a.Store.DB.QueryRowContext(ctx, "SELECT "+runColumns+" FROM runs ORDER BY started_at DESC,id DESC LIMIT 1"))
+	var activeRun any
+	run, err := scanRun(a.Store.DB.QueryRowContext(ctx, "SELECT "+runColumns+" FROM runs ORDER BY started_at DESC,rowid DESC LIMIT 1"))
 	if err == nil {
 		lastRun = LastRunHealth{ID: run.ID, Status: run.Status, StartedAt: run.StartedAt, EndedAt: run.EndedAt, Summary: run.Summary}
 	} else {
@@ -795,23 +836,43 @@ func (a *App) OperationalHealth(ctx context.Context) (map[string]any, error) {
 			return nil, err
 		}
 	}
-	rows, err := a.Store.DB.QueryContext(ctx, `SELECT w.id,
+	run, err = scanRun(a.Store.DB.QueryRowContext(ctx, "SELECT "+runColumns+" FROM runs WHERE status='running'"))
+	if err == nil {
+		var submitted int
+		if err = a.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM watch_results WHERE run_id=?`, run.ID).Scan(&submitted); err != nil {
+			return nil, err
+		}
+		activeRun = ActiveRunHealth{ID: run.ID, StartedAt: run.StartedAt, SelectedCount: len(run.SelectedWatches), SubmittedCount: submitted}
+	} else {
+		var problem *Error
+		if !errors.As(err, &problem) || problem.Status != 404 {
+			return nil, err
+		}
+	}
+	rows, err := a.Store.DB.QueryContext(ctx, `SELECT w.id,w.next_due_at,
   (SELECT status FROM watch_results wr WHERE wr.watch_id=w.id ORDER BY recorded_at DESC,run_id DESC LIMIT 1),
   (SELECT recorded_at FROM watch_results wr WHERE wr.watch_id=w.id ORDER BY recorded_at DESC,run_id DESC LIMIT 1),
   (SELECT MAX(recorded_at) FROM watch_results wr WHERE wr.watch_id=w.id AND status='success'),
   (SELECT json_extract(result,'$.error') FROM watch_results wr WHERE wr.watch_id=w.id ORDER BY recorded_at DESC,run_id DESC LIMIT 1)
-FROM watches w WHERE w.state='active' ORDER BY w.id`)
+	 FROM watches w JOIN interests i ON i.id=w.interest_id WHERE w.state='active' AND i.state='active' ORDER BY w.id`)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	watches := []WatchHealth{}
+	dueCount := 0
+	now := a.Now().UTC()
 	for rows.Next() {
 		var item WatchHealth
+		var nextDue int64
 		var status, message sql.NullString
 		var attempt, success sql.NullInt64
-		if err = rows.Scan(&item.WatchID, &status, &attempt, &success, &message); err != nil {
+		if err = rows.Scan(&item.WatchID, &nextDue, &status, &attempt, &success, &message); err != nil {
 			return nil, err
+		}
+		item.NextDueAt = time.UnixMilli(nextDue).UTC()
+		if !item.NextDueAt.After(now) {
+			dueCount++
 		}
 		item.LastStatus, item.LastError = status.String, message.String
 		if attempt.Valid {
@@ -827,5 +888,5 @@ FROM watches w WHERE w.state='active' ORDER BY w.id`)
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
-	return map[string]any{"last_run": lastRun, "watches": watches}, nil
+	return map[string]any{"last_run": lastRun, "active_run": activeRun, "due_count": dueCount, "watches": watches}, nil
 }

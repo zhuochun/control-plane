@@ -11,6 +11,8 @@ import {
   TextField,
 } from "@mui/material";
 import { api, collection } from "./api";
+import type { ServiceStatus } from "./health";
+import { formatDateTime, useSettings } from "./settings";
 
 type Interest = {
   id: string;
@@ -211,6 +213,8 @@ function ConfigurationEditor({
 }
 
 export function Interests() {
+	const settings = useSettings();
+	const status = useQuery({ queryKey: ["status"], queryFn: () => api<ServiceStatus>("/status") });
   const interests = useQuery({
     queryKey: ["interests"],
     queryFn: () => collection<Interest>("/interests"),
@@ -280,7 +284,9 @@ export function Interests() {
             <div className="watch-list">
               {watches.data
                 ?.filter((w) => w.interest_id === interest.id)
-                .map((watch) => (
+                .map((watch) => {
+                  const health = status.data?.health.watches.find((entry) => entry.watch_id === watch.id);
+                  return (
                   <div className="watch-row" key={watch.id}>
                     <div>
                       <span className="source-kind">{watch.source.kind}</span>
@@ -289,6 +295,12 @@ export function Interests() {
                         {watch.state} · every {watch.interval_seconds / 60}{" "}
                         minutes
                       </small>
+                      {watch.state === "active" && interest.state === "active" && <small>
+                        {status.isPending ? "Loading inspection status…" : status.isError ? "Inspection status unavailable" : health?.last_status ? `Last inspection: ${health.last_status}` : "Never inspected"}
+                        {health?.last_success_at && ` · last success ${formatDateTime(health.last_success_at, settings.data?.timezone)}`}
+                        {health?.next_due_at && ` · ${new Date(health.next_due_at) <= new Date() ? "Due now" : `next due ${formatDateTime(health.next_due_at, settings.data?.timezone)}`}`}
+                      </small>}
+                      {health?.last_error && <small>Latest error: {health.last_error}</small>}
                     </div>
                     <Button
                       size="small"
@@ -303,7 +315,7 @@ export function Interests() {
                       Edit Watch
                     </Button>
                   </div>
-                ))}
+                ); })}
             </div>
             <Button
               size="small"

@@ -42,6 +42,9 @@ func runRoutes(mux *http.ServeMux, a *app.App) {
 	mux.HandleFunc("POST /api/v1/runs/{id}/finish", command(func(r *http.Request, input app.FinishRun) (any, error) {
 		return a.FinishRun(r.Context(), r.PathValue("id"), input)
 	}))
+	mux.HandleFunc("POST /api/v1/runs/{id}/abandon", command(func(r *http.Request, input app.AbandonRun) (any, error) {
+		return a.AbandonRun(r.Context(), r.PathValue("id"), input)
+	}))
 	mux.HandleFunc("PUT /api/v1/runs/watches/{watch}/findings", command(func(r *http.Request, input app.SubmitWatchFindings) (any, error) {
 		return a.SubmitActiveWatchFindings(r.Context(), r.PathValue("watch"), input)
 	}))

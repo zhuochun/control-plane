@@ -125,6 +125,123 @@ func TestRunSelectionAndChangeAcknowledgement(t *testing.T) {
 	}
 }
 
+func TestAbandonRunPreservesSubmittedCoverageAndReleasesSlot(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	a := New(s)
+	now := time.Date(2026, 9, 23, 2, 0, 0, 0, time.UTC)
+	a.Now = func() time.Time { return now }
+	raw, err := a.CreateInterest(ctx, CreateInterest{Title: "Recovery", InstructionsMD: "Inspect sources"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var interest Interest
+	if err = json.Unmarshal(raw, &interest); err != nil {
+		t.Fatal(err)
+	}
+	watches := make([]Watch, 2)
+	for index := range watches {
+		raw, err = a.CreateWatch(ctx, CreateWatch{InterestID: interest.ID, Source: WatchSource{Kind: "web", Locator: fmt.Sprintf("https://example.com/%d", index)}})
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = json.Unmarshal(raw, &watches[index]); err != nil {
+			t.Fatal(err)
+		}
+	}
+	raw, err = a.StartRun(ctx, StartRun{RequestID: "recover-start"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var started struct {
+		Run   Run `json:"run"`
+		Brief struct {
+			Through int64           `json:"through_seq"`
+			Watches []SelectedWatch `json:"watches"`
+		} `json:"brief"`
+	}
+	if err = json.Unmarshal(raw, &started); err != nil {
+		t.Fatal(err)
+	}
+	if len(started.Brief.Watches) != 2 {
+		t.Fatalf("selected %d Watches", len(started.Brief.Watches))
+	}
+	health, err := a.OperationalHealth(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, ok := health["active_run"].(ActiveRunHealth)
+	if !ok || active.ID != started.Run.ID || active.SelectedCount != 2 || active.SubmittedCount != 0 || health["due_count"] != 2 {
+		t.Fatalf("active health omitted work: %+v", health)
+	}
+	_, err = a.SubmitWatchFindings(ctx, started.Run.ID, watches[0].ID, SubmitWatchFindings{RequestID: "recover-result", ExpectedWatchRevision: watches[0].Revision, Status: "success", Coverage: Coverage{ObservedThrough: now, CursorAfter: json.RawMessage("null")}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	health, err = a.OperationalHealth(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	active, ok = health["active_run"].(ActiveRunHealth)
+	if !ok || active.SubmittedCount != 1 || health["due_count"] != 1 {
+		t.Fatalf("health omitted committed coverage: %+v", health)
+	}
+	if _, err = a.AbandonRun(ctx, started.Run.ID, AbandonRun{RequestID: "missing-reason"}); err == nil {
+		t.Fatal("accepted abandonment without reason")
+	}
+	raw, err = a.AbandonRun(ctx, started.Run.ID, AbandonRun{RequestID: "abandon", Reason: "agent exited"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var abandoned Run
+	if err = json.Unmarshal(raw, &abandoned); err != nil {
+		t.Fatal(err)
+	}
+	if abandoned.Status != "failed" || abandoned.EndedAt == nil || abandoned.Summary != "Abandoned by owner: agent exited" {
+		t.Fatalf("bad abandoned run: %+v", abandoned)
+	}
+	if replay, replayErr := a.AbandonRun(ctx, started.Run.ID, AbandonRun{RequestID: "abandon", Reason: "agent exited"}); replayErr != nil || string(replay) != string(raw) {
+		t.Fatalf("abandon replay: %s %v", replay, replayErr)
+	}
+	if _, err = a.SubmitWatchFindings(ctx, started.Run.ID, watches[1].ID, SubmitWatchFindings{Status: "failed"}); err == nil {
+		t.Fatal("accepted late result")
+	}
+	if _, err = a.AbandonRun(ctx, started.Run.ID, AbandonRun{Reason: "again"}); err == nil {
+		t.Fatal("abandoned a finished run")
+	}
+	var acknowledged string
+	if err = s.DB.QueryRowContext(ctx, `SELECT value FROM settings WHERE key='acknowledged_event_seq'`).Scan(&acknowledged); err != nil || acknowledged != "0" {
+		t.Fatalf("changes acknowledged: %s %v", acknowledged, err)
+	}
+	raw, err = a.StartRun(ctx, StartRun{RequestID: "recover-next"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var next struct {
+		Brief struct {
+			Watches []SelectedWatch `json:"watches"`
+			After   int64           `json:"after_seq"`
+		} `json:"brief"`
+	}
+	if err = json.Unmarshal(raw, &next); err != nil {
+		t.Fatal(err)
+	}
+	if len(next.Brief.Watches) != 1 || next.Brief.Watches[0].ID != watches[1].ID || next.Brief.After != 0 {
+		t.Fatalf("next run lost due Watch or changes: %+v", next.Brief)
+	}
+	health, err = a.OperationalHealth(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if active, ok = health["active_run"].(ActiveRunHealth); !ok || active.SelectedCount != 1 || health["last_run"].(LastRunHealth).ID != active.ID {
+		t.Fatalf("same-time recovery run omitted from health: %+v", health)
+	}
+}
+
 func TestStartRunNormalizesInterestAndAttentionContext(t *testing.T) {
 	ctx := context.Background()
 	s, err := store.Open(ctx, t.TempDir())
@@ -220,8 +337,20 @@ func TestRunContextContinuationReturnsRemainingInterests(t *testing.T) {
 		t.Fatal(err)
 	}
 	remaining, ok := page["items"].([]Interest)
-	if !ok || len(remaining) != 1 || remaining[0].Title != fmt.Sprintf("Interest %d", contextPageSize) {
+	if !ok || len(remaining) != 1 {
 		t.Fatalf("unexpected continuation page: %#v", page)
+	}
+	seen := map[string]bool{}
+	for _, interest := range append(packet.Brief.Interests, remaining...) {
+		if seen[interest.Title] {
+			t.Fatalf("duplicate Interest across pages: %s", interest.Title)
+		}
+		seen[interest.Title] = true
+	}
+	for index := 0; index < contextPageSize+1; index++ {
+		if !seen[fmt.Sprintf("Interest %d", index)] {
+			t.Fatalf("Interest %d missing across pages", index)
+		}
 	}
 }
 

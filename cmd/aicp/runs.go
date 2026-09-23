@@ -51,6 +51,13 @@ func runCommand(send request) *cobra.Command {
 	finish.Flags().StringVar(&summary, "summary", "", "Run summary")
 	finish.Flags().Int64Var(&ackThroughSeq, "ack-through-seq", 0, "Acknowledge the captured event range through this sequence")
 	root.AddCommand(finish)
+	var abandonReason string
+	abandon := &cobra.Command{Use: "abandon <run-id>", Args: cobra.ExactArgs(1), Short: "Release an interrupted run without acknowledging changes", RunE: func(cmd *cobra.Command, args []string) error {
+		return send(cmd, "POST", "/runs/"+url.PathEscape(args[0])+"/abandon", map[string]any{"reason": abandonReason})
+	}}
+	abandon.Flags().StringVar(&abandonReason, "reason", "", "Why the external agent cannot finish this run")
+	_ = abandon.MarkFlagRequired("reason")
+	root.AddCommand(abandon)
 	var findingsFile string
 	findings := &cobra.Command{Use: "submit <watch-id>", Aliases: []string{"findings"}, Args: cobra.ExactArgs(1), Short: "Submit one final Watch finding result", RunE: func(cmd *cobra.Command, args []string) error {
 		body, err := commandFile(cmd, findingsFile)
