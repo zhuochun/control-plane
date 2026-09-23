@@ -72,19 +72,45 @@ func scanWatch(row scanner) (Watch, error) {
 }
 
 func getWatch(ctx context.Context, db querier, id string) (Watch, error) {
-	return scanWatch(db.QueryRowContext(ctx, "SELECT "+watchColumns+" FROM watches WHERE id=?", id))
+	canonical, err := resolveID(ctx, db, "watches", id)
+	if err != nil {
+		return Watch{}, err
+	}
+	return scanWatch(db.QueryRowContext(ctx, "SELECT "+watchColumns+" FROM watches WHERE id=?", canonical))
 }
 
 func (a *App) Watch(ctx context.Context, id string) (Watch, error) {
 	return getWatch(ctx, a.Store.DB, id)
 }
 
-func (a *App) Watches(ctx context.Context, interestID string) ([]Watch, error) {
+func (a *App) Watches(ctx context.Context, interestID string, states ...string) ([]Watch, error) {
 	query := "SELECT " + watchColumns + " FROM watches"
 	args := []any{}
 	if interestID != "" {
-		query += " WHERE interest_id=?"
+		canonical, err := resolveID(ctx, a.Store.DB, "interests", interestID)
+		if err != nil {
+			return nil, err
+		}
+		interestID = canonical
+	}
+	state := "active"
+	if len(states) > 0 && states[0] != "" {
+		state = states[0]
+	}
+	conditions := []string{}
+	if interestID != "" {
+		conditions = append(conditions, "interest_id=?")
 		args = append(args, interestID)
+	}
+	if state != "all" {
+		if !validState(state) {
+			return nil, Invalid("state must be active, paused, deprecated, or all")
+		}
+		conditions = append(conditions, "state=?")
+		args = append(args, state)
+	}
+	if len(conditions) > 0 {
+		query += " WHERE " + strings.Join(conditions, " AND ")
 	}
 	rows, err := a.Store.DB.QueryContext(ctx, query+" ORDER BY created_at,id", args...)
 	if err != nil {
@@ -120,9 +146,11 @@ func validateWatch(item Watch) error {
 
 func (a *App) CreateWatch(ctx context.Context, input CreateWatch) (json.RawMessage, error) {
 	return a.mutate(ctx, input.RequestID, "POST /watches", input, func(tx *sql.Tx) (any, error) {
-		if _, err := getInterest(ctx, tx, input.InterestID); err != nil {
+		interest, err := getInterest(ctx, tx, input.InterestID)
+		if err != nil {
 			return nil, err
 		}
+		input.InterestID = interest.ID
 		item := Watch{ID: uuid.NewString(), InterestID: input.InterestID, Source: input.Source, InstructionsMD: input.InstructionsMD, IntervalSeconds: 7200, LookbackSeconds: 604800, State: "active"}
 		if input.IntervalSeconds.Set {
 			item.IntervalSeconds = input.IntervalSeconds.Value
@@ -159,6 +187,7 @@ func (a *App) UpdateWatch(ctx context.Context, id string, input UpdateWatch) (js
 		if err != nil {
 			return nil, err
 		}
+		id = item.ID
 		if input.ExpectedRevision != item.Revision {
 			return nil, revisionConflict(item.Revision)
 		}

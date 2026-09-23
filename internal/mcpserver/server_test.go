@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -42,6 +43,29 @@ func TestGetBriefOverMCP(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer clientSession.Close()
+	tools, err := clientSession.ListTools(context.Background(), nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	names := map[string]bool{}
+	for _, tool := range tools.Tools {
+		names[tool.Name] = true
+	}
+	for _, name := range []string{"get_brief", "start_run", "submit_watch_findings", "upsert_item", "finish_run"} {
+		if !names[name] {
+			t.Fatalf("missing final MCP tool %q", name)
+		}
+	}
+	for _, old := range []string{"renew_run", "publish_watch_result"} {
+		if names[old] {
+			t.Fatalf("superseded MCP tool still exposed: %s", old)
+		}
+	}
+	for _, tool := range tools.Tools {
+		if tool.Name == "start_run" && strings.Contains(strings.ToLower(tool.Description), "lease") {
+			t.Fatalf("start_run description still teaches lease management: %s", tool.Description)
+		}
+	}
 
 	result, err := clientSession.CallTool(context.Background(), &mcp.CallToolParams{Name: "get_brief", Arguments: map[string]any{}})
 	if err != nil {

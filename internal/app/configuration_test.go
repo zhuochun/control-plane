@@ -76,3 +76,39 @@ func TestConfigurationPreservesCursorAndFencesStaleEdits(t *testing.T) {
 		t.Fatalf("source change retained cursor: %+v", watch)
 	}
 }
+
+func TestConfigurationListsActiveByDefaultAndResolvesUniquePrefixes(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	a := New(s)
+	activeRaw, err := a.CreateInterest(ctx, CreateInterest{RequestID: "active-list", Title: "Active"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	pausedRaw, err := a.CreateInterest(ctx, CreateInterest{RequestID: "paused-list", Title: "Paused", State: "paused"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var active, paused Interest
+	_ = json.Unmarshal(activeRaw, &active)
+	_ = json.Unmarshal(pausedRaw, &paused)
+	items, err := a.Interests(ctx)
+	if err != nil || len(items) != 1 || items[0].ID != active.ID {
+		t.Fatalf("default Interest list was not active-only: %+v %v", items, err)
+	}
+	items, err = a.Interests(ctx, "all")
+	if err != nil || len(items) != 2 {
+		t.Fatalf("explicit all Interest list failed: %+v %v", items, err)
+	}
+	resolved, err := a.Interest(ctx, active.ID[:8])
+	if err != nil || resolved.ID != active.ID {
+		t.Fatalf("unique ID prefix did not resolve: %+v %v", resolved, err)
+	}
+	if _, err = a.Interest(ctx, paused.ID[:8]); err != nil {
+		t.Fatal("direct get should retrieve inactive records:", err)
+	}
+}

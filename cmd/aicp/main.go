@@ -69,7 +69,7 @@ func command() *cobra.Command {
 	server := env("AICP_SERVER_URL", "http://127.0.0.1:7331")
 	var jsonOutput bool
 	root := &cobra.Command{Use: "aicp", Short: "A little space for what matters", SilenceUsage: true, SilenceErrors: true}
-	root.PersistentFlags().StringVar(&dataDir, "data-dir", dataDir, "Local data directory (serve only)")
+	root.PersistentFlags().StringVar(&dataDir, "data-dir", dataDir, "Local data directory (init and serve)")
 	root.PersistentFlags().StringVar(&server, "server", server, "Local server URL")
 	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Print machine-readable JSON")
 	printResult := func(cmd *cobra.Command, method, path string, body any) error {
@@ -77,7 +77,21 @@ func command() *cobra.Command {
 		if err != nil {
 			return err
 		}
-		_, err = fmt.Fprint(cmd.OutOrStdout(), string(result))
+		if jsonOutput {
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), string(result))
+			return err
+		}
+		var value any
+		if err = json.Unmarshal(result, &value); err != nil {
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), string(result))
+			return err
+		}
+		shortenIDs(value)
+		pretty, err := json.MarshalIndent(value, "", "  ")
+		if err != nil {
+			return err
+		}
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(pretty))
 		return err
 	}
 	serve := &cobra.Command{Use: "serve", Short: "Serve the local portal", RunE: func(cmd *cobra.Command, args []string) error {
@@ -108,6 +122,26 @@ func command() *cobra.Command {
 		return nil
 	}}
 	root.AddCommand(serve)
+	root.AddCommand(&cobra.Command{Use: "init", Args: cobra.NoArgs, Short: "Initialize local data and default agent guidance", RunE: func(cmd *cobra.Command, args []string) error {
+		s, err := store.Open(cmd.Context(), dataDir)
+		if err != nil {
+			return err
+		}
+		if err = s.Close(); err != nil {
+			return err
+		}
+		if jsonOutput {
+			return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]string{"status": "initialized", "data_dir": dataDir})
+		}
+		_, err = fmt.Fprintln(cmd.OutOrStdout(), "aicp is initialized.", "")
+		if err == nil {
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), "Next: express what matters as an Interest, attach a source with a Watch, and add your priorities and context in USER.md from Preferences.")
+		}
+		if err == nil {
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), "Keep `aicp serve` running, register `aicp mcp --server http://127.0.0.1:7331` with your agent harness, and let your scheduler start the external AI heartbeat.")
+		}
+		return err
+	}})
 	root.AddCommand(&cobra.Command{Use: "version", Short: "Print the executable version", RunE: func(cmd *cobra.Command, args []string) error {
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(map[string]string{"version": version})
 	}})
@@ -143,6 +177,33 @@ func command() *cobra.Command {
 		return mcpserver.New(server, version).Run(cmd.Context(), &mcp.StdioTransport{})
 	}})
 	return root
+}
+
+func shortenID(value string) string {
+	if index := strings.IndexByte(value, '-'); index > 0 {
+		return value[:index]
+	}
+	return value
+}
+
+func shortenIDs(value any) {
+	keys := map[string]bool{"id": true, "run_id": true, "interest_id": true, "watch_id": true, "item_id": true, "proposal_id": true, "parent_id": true}
+	switch typed := value.(type) {
+	case map[string]any:
+		for key, child := range typed {
+			if keys[key] {
+				if text, ok := child.(string); ok {
+					typed[key] = shortenID(text)
+				}
+				continue
+			}
+			shortenIDs(child)
+		}
+	case []any:
+		for _, child := range typed {
+			shortenIDs(child)
+		}
+	}
 }
 
 func env(key, fallback string) string {

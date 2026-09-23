@@ -39,6 +39,7 @@ func (a *App) ApplyItemAction(ctx context.Context, id string, input ApplyItemAct
 		if err != nil {
 			return nil, err
 		}
+		id = item.ID
 		if input.ExpectedStateVersion != item.StateVersion {
 			return nil, stateConflict(item)
 		}
@@ -167,6 +168,7 @@ func (a *App) SetUserNote(ctx context.Context, id string, input SetUserNote) (js
 		if err != nil {
 			return nil, err
 		}
+		id = item.ID
 		if input.ExpectedStateVersion != item.StateVersion {
 			return nil, stateConflict(item)
 		}
@@ -189,10 +191,11 @@ type ItemVersion struct {
 }
 
 func (a *App) ItemHistory(ctx context.Context, id string) ([]ItemVersion, error) {
-	if _, err := a.Item(ctx, id); err != nil {
+	item, err := a.Item(ctx, id)
+	if err != nil {
 		return nil, err
 	}
-	rows, err := a.Store.DB.QueryContext(ctx, `SELECT content_version,snapshot FROM item_versions WHERE item_id=? ORDER BY content_version DESC LIMIT 20`, id)
+	rows, err := a.Store.DB.QueryContext(ctx, `SELECT content_version,snapshot FROM item_versions WHERE item_id=? ORDER BY content_version DESC LIMIT 20`, item.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -220,8 +223,8 @@ func (a *App) ItemContext(ctx context.Context, id string) (map[string]any, error
 		return nil, err
 	}
 	var count int
-	if err = a.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM item_versions WHERE item_id=?`, id).Scan(&count); err != nil {
+	if err = a.Store.DB.QueryRowContext(ctx, `SELECT count(*) FROM item_versions WHERE item_id=?`, item.ID).Scan(&count); err != nil {
 		return nil, err
 	}
-	return map[string]any{"item": item, "history": history, "truncated": count > len(history), "limits": map[string]int{"history_items": 20}, "links": map[string]string{"item": "/api/v1/items/" + id, "history": "/api/v1/items/" + id + "/history"}}, nil
+	return map[string]any{"item": item, "history": history, "truncated": count > len(history), "limits": map[string]int{"history_items": 20}, "links": map[string]string{"item": "/api/v1/items/" + item.ID, "history": "/api/v1/items/" + item.ID + "/history"}}, nil
 }

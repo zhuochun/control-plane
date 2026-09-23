@@ -15,7 +15,7 @@ type Coverage struct {
 	ObservedThrough time.Time       `json:"observed_through"`
 	Limitations     []string        `json:"limitations"`
 }
-type PublishWatchResult struct {
+type SubmitWatchFindings struct {
 	RequestID             string    `json:"request_id"`
 	ExpectedWatchRevision int64     `json:"expected_watch_revision"`
 	Status                string    `json:"status"`
@@ -23,7 +23,7 @@ type PublishWatchResult struct {
 	Coverage              Coverage  `json:"coverage"`
 	Items                 []PutItem `json:"items"`
 }
-type PublishedItem struct {
+type SubmittedItem struct {
 	ID             string `json:"id"`
 	ContentVersion int64  `json:"content_version"`
 	StateVersion   int64  `json:"state_version"`
@@ -61,14 +61,20 @@ func selectedWatch(run Run, id string) (SelectedWatch, bool) {
 	return SelectedWatch{}, false
 }
 
-func (a *App) PublishWatchResult(ctx context.Context, runID, watchID string, input PublishWatchResult) (json.RawMessage, error) {
-	return a.mutate(ctx, input.RequestID, "PUT /runs/"+runID+"/watches/"+watchID+"/result", input, func(tx *sql.Tx) (any, error) {
+func (a *App) SubmitWatchFindings(ctx context.Context, runID, watchID string, input SubmitWatchFindings) (json.RawMessage, error) {
+	return a.mutate(ctx, input.RequestID, "PUT /runs/"+runID+"/watches/"+watchID+"/findings", input, func(tx *sql.Tx) (any, error) {
 		run, err := getRun(ctx, tx, runID)
 		if err != nil {
 			return nil, err
 		}
+		runID = run.ID
+		canonicalWatchID, err := resolveID(ctx, tx, "watches", watchID)
+		if err != nil {
+			return nil, err
+		}
+		watchID = canonicalWatchID
 		now := a.Now().UTC()
-		if err = liveRun(run, now); err != nil {
+		if err = liveRun(run); err != nil {
 			return nil, err
 		}
 		captured, ok := selectedWatch(run, watchID)
@@ -131,19 +137,19 @@ func (a *App) PublishWatchResult(ctx context.Context, runID, watchID string, inp
 		default:
 			return nil, Invalid("status must be success, partial, or failed")
 		}
-		published := make([]PublishedItem, 0, len(input.Items))
+		submitted := make([]SubmittedItem, 0, len(input.Items))
 		for _, entry := range input.Items {
 			if entry.RequestID != "" {
 				return nil, Invalid("nested item entries do not contain request_id")
 			}
 			if entry.WatchID != nil && *entry.WatchID != watchID {
-				return nil, Invalid("item watch_id conflicts with the publishing Watch")
+				return nil, Invalid("item watch_id conflicts with the submitting Watch")
 			}
 			if entry.InterestID != nil && *entry.InterestID != watch.InterestID {
-				return nil, Invalid("item interest_id conflicts with the publishing Watch")
+				return nil, Invalid("item interest_id conflicts with the submitting Watch")
 			}
 			if len(entry.Sources) == 0 {
-				return nil, Invalid("items published by a Watch need at least one source")
+				return nil, Invalid("items submitted by a Watch need at least one source")
 			}
 			entry.WatchID = &watchID
 			entry.InterestID = &watch.InterestID
@@ -152,7 +158,7 @@ func (a *App) PublishWatchResult(ctx context.Context, runID, watchID string, inp
 				return nil, err
 			}
 			item := result.(Item)
-			published = append(published, PublishedItem{ID: item.ID, ContentVersion: item.ContentVersion, StateVersion: item.StateVersion, Changed: item.ContentVersion != entry.ExpectedContentVersion})
+			submitted = append(submitted, SubmittedItem{ID: item.ID, ContentVersion: item.ContentVersion, StateVersion: item.StateVersion, Changed: item.ContentVersion != entry.ExpectedContentVersion})
 		}
 		if input.Status == "success" {
 			var cursor any
@@ -173,20 +179,32 @@ func (a *App) PublishWatchResult(ctx context.Context, runID, watchID string, inp
 		record, err := json.Marshal(struct {
 			Error    string          `json:"error,omitempty"`
 			Coverage Coverage        `json:"coverage"`
-			Items    []PublishedItem `json:"items"`
-		}{Error: input.Error, Coverage: input.Coverage, Items: published})
+			Items    []SubmittedItem `json:"items"`
+		}{Error: input.Error, Coverage: input.Coverage, Items: submitted})
 		if err != nil {
 			return nil, err
 		}
 		if _, err = tx.ExecContext(ctx, `INSERT INTO watch_results(run_id,watch_id,status,recorded_at,result) VALUES(?,?,?,?,?)`, runID, watchID, input.Status, now.UnixMilli(), string(record)); err != nil {
 			return nil, err
 		}
-		return map[string]any{"run_id": runID, "watch_id": watchID, "status": input.Status, "items": published}, nil
+		return map[string]any{"run_id": runID, "watch_id": watchID, "status": input.Status, "items": submitted}, nil
 	})
 }
 
+func (a *App) SubmitActiveWatchFindings(ctx context.Context, watchID string, input SubmitWatchFindings) (json.RawMessage, error) {
+	run, err := a.ActiveRun(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.SubmitWatchFindings(ctx, run.ID, watchID, input)
+}
+
 func (a *App) WatchResults(ctx context.Context, runID string) ([]WatchResult, error) {
-	rows, err := a.Store.DB.QueryContext(ctx, `SELECT run_id,watch_id,status,recorded_at,result FROM watch_results WHERE run_id=? ORDER BY recorded_at,watch_id`, runID)
+	canonical, err := resolveID(ctx, a.Store.DB, "runs", runID)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := a.Store.DB.QueryContext(ctx, `SELECT run_id,watch_id,status,recorded_at,result FROM watch_results WHERE run_id=? ORDER BY recorded_at,watch_id`, canonical)
 	if err != nil {
 		return nil, err
 	}

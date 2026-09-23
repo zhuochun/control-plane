@@ -8,7 +8,7 @@ import (
 )
 
 func itemCommand(send request) *cobra.Command {
-	root := &cobra.Command{Use: "item", Short: "Read and publish items"}
+	root := &cobra.Command{Use: "item", Short: "Read and save items"}
 	var view, kind, interestID, watchID, query, dedupeKey, cursor string
 	var limit int
 	list := &cobra.Command{Use: "list", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
@@ -55,6 +55,17 @@ func itemCommand(send request) *cobra.Command {
 		_ = command.MarkFlagRequired("file")
 		root.AddCommand(command)
 	}
+	var upsertFile string
+	upsert := &cobra.Command{Use: "upsert", Args: cobra.NoArgs, Short: "Create or update an Interest-level Item", RunE: func(cmd *cobra.Command, args []string) error {
+		body, err := commandFile(cmd, upsertFile)
+		if err != nil {
+			return err
+		}
+		return send(cmd, "POST", "/items/interest", body)
+	}}
+	upsert.Flags().StringVar(&upsertFile, "file", "", "JSON Item payload, or - for stdin")
+	_ = upsert.MarkFlagRequired("file")
+	root.AddCommand(upsert)
 	for _, operation := range []string{"action", "note"} {
 		operation := operation
 		var file string

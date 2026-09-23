@@ -210,13 +210,8 @@ try {
         $existing = if ($existingByKey.ContainsKey($_.key)) { $existingByKey[$_.key] } else { $null }
         New-MetricItem -Metric $_ -Existing $existing -CurrentPhase $Phase -ObservedThrough $observedThrough
     })
-    $run = Invoke-Aicp @('run', 'start', '--file', (Write-Request 'run-start' ([ordered]@{
-        request_id = New-RequestID "run-$Phase"
-        runner_label = 'okr-simulation'
-        watch_ids = @($watch.id)
-        force = $true
-    })))
-    $publish = Invoke-Aicp @('run', 'publish', $run.run.id, $watch.id, '--file', (Write-Request 'run-publish' ([ordered]@{
+    $run = Invoke-Aicp @('run', 'start', '--runner-label', 'okr-simulation', '--watch', $watch.id, '--force')
+    $publish = Invoke-Aicp @('run', 'submit', $watch.id, '--file', (Write-Request 'run-publish' ([ordered]@{
         request_id = New-RequestID "publish-$Phase"
         expected_watch_revision = [int64]$watch.revision
         status = 'success'
@@ -228,10 +223,7 @@ try {
         }
         items = $items
     })))
-    Invoke-Aicp @('run', 'finish', $run.run.id, '--file', (Write-Request 'run-finish' ([ordered]@{
-        request_id = New-RequestID "finish-$Phase"
-        summary = "Published the $Phase OKR simulation cycle for $($metrics.Count) metrics."
-    }))) | Out-Null
+    Invoke-Aicp @('run', 'finish', '--summary', "Saved the $Phase OKR simulation cycle for $($metrics.Count) metrics.") | Out-Null
 
     [ordered]@{
         status = 'passed'

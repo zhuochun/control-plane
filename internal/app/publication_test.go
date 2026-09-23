@@ -41,20 +41,20 @@ func TestWatchPublicationAdvancesCoverageAndPreservesHumanState(t *testing.T) {
 	}
 	_ = json.Unmarshal(raw, &started)
 	entry := PutItem{DedupeKey: "slack:channel:thread:1", ExpectedContentVersion: 0, Kind: "report", Title: "Choose rollout order", Summary: "A decision is needed.", Sources: []Source{{ID: "thread", URL: "https://example.com/thread", Label: "Thread", ObservedAt: now}}, Report: Report{SchemaVersion: 1, BodyMD: "Source status: open."}}
-	publication := PublishWatchResult{RequestID: "publish-one", ExpectedWatchRevision: 1, Status: "success", Coverage: Coverage{CursorBefore: json.RawMessage("null"), CursorAfter: json.RawMessage(`{"position":1}`), ObservedThrough: now, Limitations: []string{}}, Items: []PutItem{entry}}
+	publication := SubmitWatchFindings{RequestID: "publish-one", ExpectedWatchRevision: 1, Status: "success", Coverage: Coverage{CursorBefore: json.RawMessage("null"), CursorAfter: json.RawMessage(`{"position":1}`), ObservedThrough: now, Limitations: []string{}}, Items: []PutItem{entry}}
 	withoutSource := publication
 	withoutSource.RequestID = "publish-without-source"
 	withoutSource.Items = []PutItem{entry}
 	withoutSource.Items[0].Sources = nil
-	if _, err = a.PublishWatchResult(ctx, started.Run.ID, watch.ID, withoutSource); err == nil {
+	if _, err = a.SubmitWatchFindings(ctx, started.Run.ID, watch.ID, withoutSource); err == nil {
 		t.Fatal("Watch publication accepted a source-less finding")
 	}
-	raw, err = a.PublishWatchResult(ctx, started.Run.ID, watch.ID, publication)
+	raw, err = a.SubmitWatchFindings(ctx, started.Run.ID, watch.ID, publication)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var result struct {
-		Items []PublishedItem `json:"items"`
+		Items []SubmittedItem `json:"items"`
 	}
 	_ = json.Unmarshal(raw, &result)
 	if len(result.Items) != 1 || !result.Items[0].Changed {
@@ -67,7 +67,7 @@ func TestWatchPublicationAdvancesCoverageAndPreservesHumanState(t *testing.T) {
 	if strings.Contains(storedResult, entry.Title) || strings.Contains(storedResult, entry.Report.BodyMD) {
 		t.Fatalf("Watch result duplicated report content: %s", storedResult)
 	}
-	detail, err := a.RunDetail(ctx, started.Run.ID)
+	detail, err := a.RunDetail(ctx, started.Run.ID[:8])
 	if err != nil || len(detail["results"].([]WatchResult)) != 1 {
 		t.Fatalf("run detail omitted Watch result: %#v %v", detail, err)
 	}
@@ -106,7 +106,7 @@ func TestWatchPublicationAdvancesCoverageAndPreservesHumanState(t *testing.T) {
 	publication.Coverage.CursorAfter = json.RawMessage(`{"position":2}`)
 	publication.Coverage.ObservedThrough = now
 	publication.Items = []PutItem{entry}
-	if _, err = a.PublishWatchResult(ctx, second.Run.ID, watch.ID, publication); err != nil {
+	if _, err = a.SubmitWatchFindings(ctx, second.Run.ID, watch.ID, publication); err != nil {
 		t.Fatal(err)
 	}
 	item, err := a.Item(ctx, itemID)
@@ -142,7 +142,7 @@ func TestWatchPublicationAdvancesCoverageAndPreservesHumanState(t *testing.T) {
 	publication.ExpectedWatchRevision = 1
 	publication.Coverage.CursorBefore = json.RawMessage(`{"position":2}`)
 	publication.Items = nil
-	if _, err = a.PublishWatchResult(ctx, third.Run.ID, watch.ID, publication); err == nil {
+	if _, err = a.SubmitWatchFindings(ctx, third.Run.ID, watch.ID, publication); err == nil {
 		t.Fatal("published against changed Interest instructions")
 	}
 	var count int
@@ -190,16 +190,16 @@ func TestMixedAndPartialResultsKeepTruthfulCheckpoints(t *testing.T) {
 	coverage := func(after, next string) Coverage {
 		return Coverage{CursorBefore: json.RawMessage(after), CursorAfter: json.RawMessage(next), ObservedThrough: now, Limitations: []string{}}
 	}
-	if _, err = a.PublishWatchResult(ctx, started.Run.ID, good.ID, PublishWatchResult{RequestID: "mixed-success", ExpectedWatchRevision: 1, Status: "success", Coverage: coverage("null", `{"position":1}`)}); err != nil {
+	if _, err = a.SubmitWatchFindings(ctx, started.Run.ID, good.ID, SubmitWatchFindings{RequestID: "mixed-success", ExpectedWatchRevision: 1, Status: "success", Coverage: coverage("null", `{"position":1}`)}); err != nil {
 		t.Fatal(err)
 	}
 	sources := []Source{{ID: "fixture", URL: "https://example.com/partial", Label: "Partial fixture", ObservedAt: now}}
-	partial := PublishWatchResult{RequestID: "mixed-partial", ExpectedWatchRevision: 1, Status: "partial", Error: "fixture ended early", Coverage: coverage("null", "null"), Items: []PutItem{{DedupeKey: "partial:item", Kind: "note", Title: "Partial finding", Summary: "Saved before the source ended.", Sources: sources, Report: Report{SchemaVersion: 1, BodyMD: "Coverage is partial."}}}}
-	first, err := a.PublishWatchResult(ctx, started.Run.ID, retry.ID, partial)
+	partial := SubmitWatchFindings{RequestID: "mixed-partial", ExpectedWatchRevision: 1, Status: "partial", Error: "fixture ended early", Coverage: coverage("null", "null"), Items: []PutItem{{DedupeKey: "partial:item", Kind: "note", Title: "Partial finding", Summary: "Saved before the source ended.", Sources: sources, Report: Report{SchemaVersion: 1, BodyMD: "Coverage is partial."}}}}
+	first, err := a.SubmitWatchFindings(ctx, started.Run.ID, retry.ID, partial)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = a.PublishWatchResult(ctx, started.Run.ID, retry.ID, PublishWatchResult{RequestID: "replacement", ExpectedWatchRevision: 1, Status: "failed", Error: "replace", Coverage: coverage("null", "null")}); err == nil {
+	if _, err = a.SubmitWatchFindings(ctx, started.Run.ID, retry.ID, SubmitWatchFindings{RequestID: "replacement", ExpectedWatchRevision: 1, Status: "failed", Error: "replace", Coverage: coverage("null", "null")}); err == nil {
 		t.Fatal("replaced a final result within one run")
 	}
 	finished, err := a.FinishRun(ctx, started.Run.ID, FinishRun{RequestID: "mixed-finish", Summary: "One source needs retry."})
@@ -213,7 +213,7 @@ func TestMixedAndPartialResultsKeepTruthfulCheckpoints(t *testing.T) {
 	}
 	// Receipts are checked before live-run state, so a transport retry still
 	// receives the committed response after the run has finished.
-	replayed, err := a.PublishWatchResult(ctx, started.Run.ID, retry.ID, partial)
+	replayed, err := a.SubmitWatchFindings(ctx, started.Run.ID, retry.ID, partial)
 	if err != nil || string(replayed) != string(first) {
 		t.Fatalf("partial result did not replay: %s %s %v", first, replayed, err)
 	}
@@ -235,8 +235,8 @@ func TestMixedAndPartialResultsKeepTruthfulCheckpoints(t *testing.T) {
 	}
 	_ = json.Unmarshal(raw, &started)
 	sources[0].ObservedAt = now
-	complete := PublishWatchResult{RequestID: "retry-success", ExpectedWatchRevision: 1, Status: "success", Coverage: Coverage{CursorBefore: json.RawMessage("null"), CursorAfter: json.RawMessage(`{"position":2}`), ObservedThrough: now, Limitations: []string{}}, Items: []PutItem{{DedupeKey: "partial:item", ExpectedContentVersion: 1, Kind: "note", Title: "Partial finding", Summary: "Coverage is now complete.", Sources: sources, Report: Report{SchemaVersion: 1, BodyMD: "Coverage is complete."}}}}
-	if _, err = a.PublishWatchResult(ctx, started.Run.ID, retry.ID, complete); err != nil {
+	complete := SubmitWatchFindings{RequestID: "retry-success", ExpectedWatchRevision: 1, Status: "success", Coverage: Coverage{CursorBefore: json.RawMessage("null"), CursorAfter: json.RawMessage(`{"position":2}`), ObservedThrough: now, Limitations: []string{}}, Items: []PutItem{{DedupeKey: "partial:item", ExpectedContentVersion: 1, Kind: "note", Title: "Partial finding", Summary: "Coverage is now complete.", Sources: sources, Report: Report{SchemaVersion: 1, BodyMD: "Coverage is complete."}}}}
+	if _, err = a.SubmitWatchFindings(ctx, started.Run.ID, retry.ID, complete); err != nil {
 		t.Fatal(err)
 	}
 	items, _ = a.Items(ctx, ItemFilters{DedupeKey: "partial:item"})

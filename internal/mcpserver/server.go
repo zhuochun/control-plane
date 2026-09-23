@@ -16,9 +16,8 @@ import (
 
 type Caller struct{ Client *client.Client }
 type empty struct{}
-type runID struct {
-	RunID     string `json:"run_id" jsonschema:"ID of the server-held run"`
-	RequestID string `json:"request_id" jsonschema:"Stable idempotency key"`
+type briefInput struct {
+	Cursor string `json:"cursor,omitempty" jsonschema:"Continuation cursor from an earlier brief page"`
 }
 type itemID struct {
 	ItemID string `json:"item_id"`
@@ -30,21 +29,21 @@ type changesInput struct {
 	Limit      int    `json:"limit,omitempty"`
 }
 type startRunInput struct {
-	RequestID   string   `json:"request_id"`
-	RunnerLabel string   `json:"runner_label"`
+	RequestID   string   `json:"request_id,omitempty"`
+	RunnerLabel string   `json:"runner_label,omitempty"`
 	WatchIDs    []string `json:"watch_ids,omitempty"`
 	Force       bool     `json:"force,omitempty"`
 }
 type finishRunInput struct {
-	RunID         string `json:"run_id"`
-	RequestID     string `json:"request_id"`
-	Summary       string `json:"summary"`
+	RunID         string `json:"run_id,omitempty"`
+	RequestID     string `json:"request_id,omitempty"`
+	Summary       string `json:"summary,omitempty"`
 	AckThroughSeq *int64 `json:"ack_through_seq,omitempty"`
 }
-type publishInput struct {
-	RunID                 string        `json:"run_id"`
+type findingsInput struct {
+	RunID                 string        `json:"run_id,omitempty"`
 	WatchID               string        `json:"watch_id"`
-	RequestID             string        `json:"request_id"`
+	RequestID             string        `json:"request_id,omitempty"`
 	ExpectedWatchRevision int64         `json:"expected_watch_revision"`
 	Status                string        `json:"status"`
 	Error                 string        `json:"error,omitempty"`
@@ -53,12 +52,12 @@ type publishInput struct {
 }
 type actionInput struct {
 	ItemID               string     `json:"item_id"`
-	RequestID            string     `json:"request_id"`
+	RequestID            string     `json:"request_id,omitempty"`
 	ExpectedStateVersion int64      `json:"expected_state_version"`
 	Action               app.Action `json:"action"`
 }
 type proposalInput struct {
-	RequestID        string         `json:"request_id"`
+	RequestID        string         `json:"request_id,omitempty"`
 	ProposalKey      string         `json:"proposal_key"`
 	TargetType       string         `json:"target_type"`
 	TargetID         *string        `json:"target_id,omitempty"`
@@ -98,11 +97,15 @@ func respond(value map[string]any, err error) (*mcp.CallToolResult, map[string]a
 func New(serverURL, version string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "aicp", Version: version}, nil)
 	caller := Caller{Client: client.New(serverURL)}
-	mcp.AddTool(server, &mcp.Tool{Name: "get_brief", Description: "Read due Watches, bounded human changes, open work, reminders, and health from aicp."}, func(ctx context.Context, _ *mcp.CallToolRequest, _ empty) (*mcp.CallToolResult, map[string]any, error) {
-		value, err := caller.call(ctx, http.MethodGet, "/brief", nil)
+	mcp.AddTool(server, &mcp.Tool{Name: "get_brief", Description: "Preview aicp's active Interests, due Watches, unarchived Attention summaries, captured changes, contexts, and health. Read-only; follow continuation cursors until the requested collection is complete."}, func(ctx context.Context, _ *mcp.CallToolRequest, input briefInput) (*mcp.CallToolResult, map[string]any, error) {
+		path := "/brief"
+		if input.Cursor != "" {
+			path += "?cursor=" + url.QueryEscape(input.Cursor)
+		}
+		value, err := caller.call(ctx, http.MethodGet, path, nil)
 		return respond(value, err)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "get_changes", Description: "Read a captured, bounded range of durable human and configuration changes."}, func(ctx context.Context, _ *mcp.CallToolRequest, input changesInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "get_changes", Description: "Read pages from the exact captured event range returned by start_run. Consume every page before relying on older assumptions."}, func(ctx context.Context, _ *mcp.CallToolRequest, input changesInput) (*mcp.CallToolResult, map[string]any, error) {
 		query := url.Values{"after_seq": {strconv.FormatInt(input.AfterSeq, 10)}, "through_seq": {strconv.FormatInt(input.ThroughSeq, 10)}}
 		if input.Cursor != "" {
 			query.Set("cursor", input.Cursor)
@@ -113,7 +116,7 @@ func New(serverURL, version string) *mcp.Server {
 		value, err := caller.call(ctx, http.MethodGet, "/changes?"+query.Encode(), nil)
 		return respond(value, err)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "start_run", Description: "Claim aicp's single 30-minute agent lease and receive its authoritative brief."}, func(ctx context.Context, _ *mcp.CallToolRequest, input startRunInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "start_run", Description: "Check in for one heartbeat, claim the single active run slot, and receive the authoritative bounded work packet. Active due Watches are selected by default; consume all Interest, Attention, and change continuations before finishing."}, func(ctx context.Context, _ *mcp.CallToolRequest, input startRunInput) (*mcp.CallToolResult, map[string]any, error) {
 		body := map[string]any{"request_id": input.RequestID, "runner_label": input.RunnerLabel, "force": input.Force}
 		if input.WatchIDs != nil {
 			body["watch_ids"] = input.WatchIDs
@@ -121,20 +124,28 @@ func New(serverURL, version string) *mcp.Server {
 		value, err := caller.call(ctx, http.MethodPost, "/runs", body)
 		return respond(value, err)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "renew_run", Description: "Extend a live aicp run lease by 30 minutes."}, func(ctx context.Context, _ *mcp.CallToolRequest, input runID) (*mcp.CallToolResult, map[string]any, error) {
-		value, err := caller.call(ctx, http.MethodPost, "/runs/"+input.RunID+"/renew", map[string]any{"request_id": input.RequestID})
+	mcp.AddTool(server, &mcp.Tool{Name: "submit_watch_findings", Description: "Submit one final success, partial, failed, or empty result for one selected Watch. Atomically save its Items, coverage, limitations, and successful checkpoint. Call exactly once per selected Watch."}, func(ctx context.Context, _ *mcp.CallToolRequest, input findingsInput) (*mcp.CallToolResult, map[string]any, error) {
+		body := app.SubmitWatchFindings{RequestID: input.RequestID, ExpectedWatchRevision: input.ExpectedWatchRevision, Status: input.Status, Error: input.Error, Coverage: input.Coverage, Items: input.Items}
+		path := "/runs/watches/" + input.WatchID + "/findings"
+		if input.RunID != "" {
+			path = "/runs/" + input.RunID + "/watches/" + input.WatchID + "/findings"
+		}
+		value, err := caller.call(ctx, http.MethodPut, path, body)
 		return respond(value, err)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "publish_watch_result", Description: "Atomically publish one final Watch result, item updates, and its successful checkpoint."}, func(ctx context.Context, _ *mcp.CallToolRequest, input publishInput) (*mcp.CallToolResult, map[string]any, error) {
-		body := app.PublishWatchResult{RequestID: input.RequestID, ExpectedWatchRevision: input.ExpectedWatchRevision, Status: input.Status, Error: input.Error, Coverage: input.Coverage, Items: input.Items}
-		value, err := caller.call(ctx, http.MethodPut, "/runs/"+input.RunID+"/watches/"+input.WatchID+"/result", body)
+	mcp.AddTool(server, &mcp.Tool{Name: "upsert_item", Description: "Create or update an Interest-level Item that is not specific to a selected Watch. Use a stable dedupe key and expected content version; this never advances Watch coverage."}, func(ctx context.Context, _ *mcp.CallToolRequest, input app.PutItem) (*mcp.CallToolResult, map[string]any, error) {
+		value, err := caller.call(ctx, http.MethodPost, "/items/interest", input)
 		return respond(value, err)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "finish_run", Description: "Close a run and optionally acknowledge exactly its consumed captured change range."}, func(ctx context.Context, _ *mcp.CallToolRequest, input finishRunInput) (*mcp.CallToolResult, map[string]any, error) {
-		value, err := caller.call(ctx, http.MethodPost, "/runs/"+input.RunID+"/finish", app.FinishRun{RequestID: input.RequestID, Summary: input.Summary, AckThroughSeq: input.AckThroughSeq})
+	mcp.AddTool(server, &mcp.Tool{Name: "finish_run", Description: "Check out the active heartbeat run after every selected Watch has a terminal coverage record. Store a summary and optionally acknowledge the exact captured change range."}, func(ctx context.Context, _ *mcp.CallToolRequest, input finishRunInput) (*mcp.CallToolResult, map[string]any, error) {
+		path := "/runs/finish"
+		if input.RunID != "" {
+			path = "/runs/" + input.RunID + "/finish"
+		}
+		value, err := caller.call(ctx, http.MethodPost, path, app.FinishRun{RequestID: input.RequestID, Summary: input.Summary, AckThroughSeq: input.AckThroughSeq})
 		return respond(value, err)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "get_item", Description: "Read one complete aicp item with current content and independent local state."}, func(ctx context.Context, _ *mcp.CallToolRequest, input itemID) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "get_item", Description: "Read one complete Item, including current content, source references, versions, and independent user state before updating it."}, func(ctx context.Context, _ *mcp.CallToolRequest, input itemID) (*mcp.CallToolResult, map[string]any, error) {
 		value, err := caller.call(ctx, http.MethodGet, "/items/"+input.ItemID, nil)
 		return respond(value, err)
 	})
@@ -147,7 +158,7 @@ func New(serverURL, version string) *mcp.Server {
 		value, err := caller.call(ctx, http.MethodPost, "/items/"+input.ItemID+"/actions", body)
 		return respond(value, err)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "propose_change", Description: "Propose a typed Interest or Watch configuration change for human review."}, func(ctx context.Context, _ *mcp.CallToolRequest, input proposalInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "propose_change", Description: "Suggest creation, revision, or deprecation of one Interest or Watch for human review. Never apply configuration changes implicitly."}, func(ctx context.Context, _ *mcp.CallToolRequest, input proposalInput) (*mcp.CallToolResult, map[string]any, error) {
 		var payload json.RawMessage
 		if input.Payload != nil {
 			payload, _ = json.Marshal(input.Payload)

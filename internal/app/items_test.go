@@ -152,3 +152,56 @@ func TestAllItemKindsShareContentAndOnlyTaskDefaultsTodo(t *testing.T) {
 		}
 	}
 }
+
+func TestInterestLevelItemDoesNotCountAsWatchCoverage(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	a := New(s)
+	raw, err := a.CreateInterest(ctx, CreateInterest{RequestID: "interest-level-interest", Title: "Cross-source context"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var interest Interest
+	_ = json.Unmarshal(raw, &interest)
+	id := interest.ID
+	raw, err = a.UpsertInterestItem(ctx, PutItem{DedupeKey: "interest:cross-source", ExpectedContentVersion: 0, Kind: "note", InterestID: &id, Title: "Cross-source note", Summary: "Relevant beyond one Watch.", Sources: []Source{}, Report: Report{SchemaVersion: 1, BodyMD: "This finding is Interest-level."}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var item Item
+	_ = json.Unmarshal(raw, &item)
+	if item.InterestID == nil || *item.InterestID != interest.ID || item.WatchID != nil {
+		t.Fatalf("bad Interest-level item: %+v", item)
+	}
+	if _, err = a.UpsertInterestItem(ctx, PutItem{RequestID: "bad-watch-item", DedupeKey: "interest:bad", ExpectedContentVersion: 0, Kind: "note", InterestID: &id, WatchID: &id, Title: "Bad", Summary: "Bad", Sources: []Source{}, Report: Report{SchemaVersion: 1, BodyMD: "Bad"}}); err == nil {
+		t.Fatal("accepted Watch-bound Interest-level item")
+	}
+	watchRaw, err := a.CreateWatch(ctx, CreateWatch{RequestID: "interest-level-watch", InterestID: interest.ID, Source: WatchSource{Kind: "fixture", Locator: "scope"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var watch Watch
+	if err = json.Unmarshal(watchRaw, &watch); err != nil {
+		t.Fatal(err)
+	}
+	watchInterest := interest.ID
+	watchItemRaw, err := a.PutItem(ctx, "", PutItem{RequestID: "watch-scoped-item", DedupeKey: "scope:watch", ExpectedContentVersion: 0, Kind: "note", InterestID: &watchInterest, WatchID: &watch.ID, Title: "Watch finding", Summary: "Watch-scoped content.", Sources: []Source{}, Report: Report{SchemaVersion: 1, BodyMD: "Watch content."}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var watchItem Item
+	if err = json.Unmarshal(watchItemRaw, &watchItem); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.UpsertInterestItem(ctx, PutItem{RequestID: "scope-conflict", DedupeKey: "scope:watch", ExpectedContentVersion: 1, Kind: "note", InterestID: &id, Title: "Cross-source replacement", Summary: "Must not detach the Watch.", Sources: []Source{}, Report: Report{SchemaVersion: 1, BodyMD: "Replacement."}}); err == nil {
+		t.Fatal("Interest-level upsert detached a Watch-scoped item")
+	}
+	scoped, err := a.Item(ctx, watchItem.ID)
+	if err != nil || scoped.WatchID == nil || *scoped.WatchID != watch.ID {
+		t.Fatalf("Watch scope changed after rejected Interest upsert: %+v %v", scoped, err)
+	}
+}

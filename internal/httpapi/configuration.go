@@ -36,7 +36,11 @@ func read(run func(*http.Request) (any, error)) http.HandlerFunc {
 
 func configurationRoutes(mux *http.ServeMux, a *app.App) {
 	mux.HandleFunc("GET /api/v1/interests", read(func(r *http.Request) (any, error) {
-		items, err := a.Interests(r.Context())
+		state := r.URL.Query().Get("state")
+		if r.URL.Query().Get("all") == "1" {
+			state = "all"
+		}
+		items, err := a.Interests(r.Context(), state)
 		if err != nil {
 			return nil, err
 		}
@@ -50,7 +54,11 @@ func configurationRoutes(mux *http.ServeMux, a *app.App) {
 		return a.UpdateInterest(r.Context(), r.PathValue("id"), input)
 	}))
 	mux.HandleFunc("GET /api/v1/watches", read(func(r *http.Request) (any, error) {
-		items, err := a.Watches(r.Context(), r.URL.Query().Get("interest_id"))
+		state := r.URL.Query().Get("state")
+		if r.URL.Query().Get("all") == "1" {
+			state = "all"
+		}
+		items, err := a.Watches(r.Context(), r.URL.Query().Get("interest_id"), state)
 		if err != nil {
 			return nil, err
 		}

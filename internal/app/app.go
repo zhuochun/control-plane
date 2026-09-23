@@ -12,6 +12,7 @@ import (
 	"time"
 	_ "time/tzdata"
 
+	"github.com/google/uuid"
 	"github.com/zhuochun/control-plane/internal/store"
 )
 
@@ -38,8 +39,14 @@ func Invalid(message string) error {
 // mutate commits the command, its event, and its receipt together. Receipt lookup
 // precedes live-state checks, so a successful retry survives later state changes.
 func (a *App) mutate(ctx context.Context, requestID, operation string, request any, command func(*sql.Tx) (any, error)) (json.RawMessage, error) {
-	if requestID == "" || len(requestID) > 200 {
-		return nil, Invalid("request_id must contain 1 to 200 characters")
+	if len(requestID) > 200 {
+		return nil, Invalid("request_id must contain at most 200 characters")
+	}
+	if requestID == "" {
+		// Local interactive and MCP calls do not need to manufacture an
+		// idempotency key. Explicit request IDs remain available when a caller
+		// needs replayable retries.
+		requestID = uuid.NewString()
 	}
 	body, err := json.Marshal(request)
 	if err != nil {

@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,20 +14,21 @@ import (
 )
 
 const runLease = 30 * time.Minute
+const contextPageSize = 50
+const contextPageBytes = 64 << 10
 
 type SelectedWatch struct {
-	ID                     string          `json:"id"`
-	Revision               int64           `json:"revision"`
-	InterestID             string          `json:"interest_id"`
-	InterestRevision       int64           `json:"interest_revision"`
-	Source                 WatchSource     `json:"source"`
-	InstructionsMD         string          `json:"instructions_md"`
-	InterestInstructionsMD string          `json:"interest_instructions_md"`
-	Cursor                 json.RawMessage `json:"cursor"`
-	IntervalSeconds        int64           `json:"interval_seconds"`
-	LookbackSeconds        int64           `json:"lookback_seconds"`
-	NextDueAt              time.Time       `json:"next_due_at"`
-	RelatedItemIDs         []string        `json:"related_item_ids"`
+	ID               string          `json:"id"`
+	Revision         int64           `json:"revision"`
+	InterestID       string          `json:"interest_id"`
+	InterestRevision int64           `json:"interest_revision"`
+	Source           WatchSource     `json:"source"`
+	InstructionsMD   string          `json:"instructions_md"`
+	Cursor           json.RawMessage `json:"cursor"`
+	IntervalSeconds  int64           `json:"interval_seconds"`
+	LookbackSeconds  int64           `json:"lookback_seconds"`
+	NextDueAt        time.Time       `json:"next_due_at"`
+	RelatedItems     []AttentionItem `json:"related_items"`
 }
 
 type AttentionItem struct {
@@ -50,11 +52,19 @@ type Run struct {
 	Status          string          `json:"status"`
 	StartedAt       time.Time       `json:"started_at"`
 	EndedAt         *time.Time      `json:"ended_at"`
-	LeaseExpiresAt  time.Time       `json:"lease_expires_at"`
-	SelectedWatches []SelectedWatch `json:"selected_watches"`
+	LeaseExpiresAt  time.Time       `json:"-"`
+	SelectedWatches []SelectedWatch `json:"-"`
 	AfterSeq        int64           `json:"after_seq"`
 	ThroughSeq      int64           `json:"through_seq"`
 	Summary         string          `json:"summary"`
+}
+
+// RunSummary is the human-facing history shape. The active packet keeps its
+// selected Watches under brief; history still exposes them for portal counts
+// and run browsing without changing the authoritative run response.
+type RunSummary struct {
+	Run
+	SelectedWatches []SelectedWatch `json:"selected_watches"`
 }
 
 type StartRun struct {
@@ -62,9 +72,6 @@ type StartRun struct {
 	RunnerLabel string          `json:"runner_label"`
 	WatchIDs    Field[[]string] `json:"watch_ids"`
 	Force       bool            `json:"force,omitempty"`
-}
-type RenewRun struct {
-	RequestID string `json:"request_id"`
 }
 type FinishRun struct {
 	RequestID     string `json:"request_id"`
@@ -96,33 +103,51 @@ func scanRun(row scanner) (Run, error) {
 const runColumns = `id,runner_label,status,started_at,ended_at,lease_expires_at,selected_watches,after_seq,through_seq,summary`
 
 func getRun(ctx context.Context, db querier, id string) (Run, error) {
-	return scanRun(db.QueryRowContext(ctx, "SELECT "+runColumns+" FROM runs WHERE id=?", id))
+	canonical, err := resolveID(ctx, db, "runs", id)
+	if err != nil {
+		return Run{}, err
+	}
+	return scanRun(db.QueryRowContext(ctx, "SELECT "+runColumns+" FROM runs WHERE id=?", canonical))
 }
 func (a *App) Run(ctx context.Context, id string) (Run, error) { return getRun(ctx, a.Store.DB, id) }
+func (a *App) ActiveRun(ctx context.Context) (Run, error) {
+	var id string
+	if err := a.Store.DB.QueryRowContext(ctx, "SELECT id FROM runs WHERE status='running'").Scan(&id); err != nil {
+		return Run{}, missing(err)
+	}
+	return getRun(ctx, a.Store.DB, id)
+}
+func (a *App) FinishActiveRun(ctx context.Context, input FinishRun) (json.RawMessage, error) {
+	run, err := a.ActiveRun(ctx)
+	if err != nil {
+		return nil, err
+	}
+	return a.FinishRun(ctx, run.ID, input)
+}
 func (a *App) RunDetail(ctx context.Context, id string) (map[string]any, error) {
 	run, err := a.Run(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	results, err := a.WatchResults(ctx, id)
+	results, err := a.WatchResults(ctx, run.ID)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"run": run, "results": results}, nil
+	return map[string]any{"run": run, "selected_watches": run.SelectedWatches, "results": results}, nil
 }
-func (a *App) Runs(ctx context.Context) ([]Run, error) {
+func (a *App) Runs(ctx context.Context) ([]RunSummary, error) {
 	rows, err := a.Store.DB.QueryContext(ctx, "SELECT "+runColumns+" FROM runs ORDER BY started_at DESC,id DESC")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []Run{}
+	items := []RunSummary{}
 	for rows.Next() {
 		item, err := scanRun(rows)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, item)
+		items = append(items, RunSummary{Run: item, SelectedWatches: item.SelectedWatches})
 	}
 	return items, rows.Err()
 }
@@ -131,15 +156,25 @@ func selectWatches(ctx context.Context, tx *sql.Tx, input StartRun, now int64) (
 	if input.Force && !input.WatchIDs.Set {
 		return nil, 0, Invalid("force requires explicit watch_ids")
 	}
-	query := `SELECT w.id,w.revision,w.interest_id,i.revision,w.source,w.instructions_md,i.instructions_md,w.cursor,w.interval_seconds,w.lookback_seconds,w.next_due_at
+	watchIDs := append([]string(nil), input.WatchIDs.Value...)
+	if input.WatchIDs.Set {
+		for index, id := range watchIDs {
+			canonical, err := resolveID(ctx, tx, "watches", id)
+			if err != nil {
+				return nil, 0, err
+			}
+			watchIDs[index] = canonical
+		}
+	}
+	query := `SELECT w.id,w.revision,w.interest_id,i.revision,w.source,w.instructions_md,w.cursor,w.interval_seconds,w.lookback_seconds,w.next_due_at
 FROM watches w JOIN interests i ON i.id=w.interest_id WHERE w.state='active' AND i.state='active'`
 	args := []any{}
 	if input.WatchIDs.Set {
-		if len(input.WatchIDs.Value) == 0 {
+		if len(watchIDs) == 0 {
 			return []SelectedWatch{}, 0, nil
 		}
 		query += " AND w.id IN ("
-		for index, id := range input.WatchIDs.Value {
+		for index, id := range watchIDs {
 			if index > 0 {
 				query += ","
 			}
@@ -159,7 +194,7 @@ FROM watches w JOIN interests i ON i.id=w.interest_id WHERE w.state='active' AND
 	if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM ("+query+")", args...).Scan(&eligible); err != nil {
 		return nil, 0, err
 	}
-	if input.WatchIDs.Set && eligible != len(input.WatchIDs.Value) {
+	if input.WatchIDs.Set && eligible != len(watchIDs) {
 		return nil, 0, Invalid("Every selected Watch must exist, be active with an active Interest, and be due unless forced")
 	}
 	query += " ORDER BY w.next_due_at,w.id LIMIT 20"
@@ -174,7 +209,7 @@ FROM watches w JOIN interests i ON i.id=w.interest_id WHERE w.state='active' AND
 		var source string
 		var due int64
 		var nullable sql.NullString
-		if err = rows.Scan(&item.ID, &item.Revision, &item.InterestID, &item.InterestRevision, &source, &item.InstructionsMD, &item.InterestInstructionsMD, &nullable, &item.IntervalSeconds, &item.LookbackSeconds, &due); err != nil {
+		if err = rows.Scan(&item.ID, &item.Revision, &item.InterestID, &item.InterestRevision, &source, &item.InstructionsMD, &nullable, &item.IntervalSeconds, &item.LookbackSeconds, &due); err != nil {
 			return nil, 0, err
 		}
 		if err = json.Unmarshal([]byte(source), &item.Source); err != nil {
@@ -193,18 +228,18 @@ FROM watches w JOIN interests i ON i.id=w.interest_id WHERE w.state='active' AND
 		return nil, 0, err
 	}
 	for index := range selected {
-		selected[index].RelatedItemIDs = []string{}
-		itemRows, itemErr := tx.QueryContext(ctx, `SELECT id FROM items WHERE watch_id=? ORDER BY content_updated_at DESC,id LIMIT 20`, selected[index].ID)
+		selected[index].RelatedItems = []AttentionItem{}
+		itemRows, itemErr := tx.QueryContext(ctx, `SELECT `+itemColumns+` FROM items WHERE watch_id=? ORDER BY content_updated_at DESC,id LIMIT 20`, selected[index].ID)
 		if itemErr != nil {
 			return nil, 0, itemErr
 		}
 		for itemRows.Next() {
-			var id string
-			if itemErr = itemRows.Scan(&id); itemErr != nil {
+			item, scanErr := scanItem(itemRows)
+			if scanErr != nil {
 				itemRows.Close()
-				return nil, 0, itemErr
+				return nil, 0, scanErr
 			}
-			selected[index].RelatedItemIDs = append(selected[index].RelatedItemIDs, id)
+			selected[index].RelatedItems = append(selected[index].RelatedItems, attentionItem(item))
 		}
 		if itemErr = itemRows.Close(); itemErr != nil {
 			return nil, 0, itemErr
@@ -214,10 +249,154 @@ FROM watches w JOIN interests i ON i.id=w.interest_id WHERE w.state='active' AND
 	return selected, more, nil
 }
 
+type runContextSnapshot struct {
+	Interests []Interest        `json:"interests"`
+	Attention []AttentionItem   `json:"attention_items"`
+	Contexts  map[string]string `json:"contexts"`
+}
+
+type contextCursor struct {
+	RunID      string `json:"run_id,omitempty"`
+	Collection string `json:"collection"`
+	Offset     int    `json:"offset"`
+}
+
+func encodeContextCursor(cursor contextCursor) string {
+	data, _ := json.Marshal(cursor)
+	return base64.RawURLEncoding.EncodeToString(data)
+}
+
+func decodeContextCursor(value string) (contextCursor, error) {
+	data, err := base64.RawURLEncoding.DecodeString(value)
+	if err != nil {
+		return contextCursor{}, Invalid("Invalid continuation cursor")
+	}
+	var cursor contextCursor
+	if err = json.Unmarshal(data, &cursor); err != nil || cursor.Offset < 0 || (cursor.Collection != "interests" && cursor.Collection != "attention_items") {
+		return contextCursor{}, Invalid("Invalid continuation cursor")
+	}
+	return cursor, nil
+}
+
+func activeInterests(ctx context.Context, db rowsQuerier) ([]Interest, error) {
+	rows, err := db.QueryContext(ctx, "SELECT "+interestColumns+" FROM interests WHERE state='active' ORDER BY created_at,id")
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []Interest{}
+	for rows.Next() {
+		item, err := scanInterest(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, item)
+	}
+	return items, rows.Err()
+}
+
+func attentionItems(ctx context.Context, db rowsQuerier, now int64) ([]AttentionItem, error) {
+	rows, err := db.QueryContext(ctx, `SELECT `+itemColumns+` FROM items
+WHERE todo_state='todo' OR acknowledged_content_version<content_version OR (remind_at IS NOT NULL AND remind_at<=?)
+ORDER BY CASE WHEN remind_at IS NOT NULL AND remind_at<=? THEN 0 WHEN todo_state='todo' THEN 1 ELSE 2 END, COALESCE(remind_at,content_updated_at),content_updated_at DESC,id`, now, now)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	items := []AttentionItem{}
+	for rows.Next() {
+		item, err := scanItem(rows)
+		if err != nil {
+			return nil, err
+		}
+		items = append(items, attentionItem(item))
+	}
+	return items, rows.Err()
+}
+
+func attentionItem(item Item) AttentionItem {
+	return AttentionItem{ID: item.ID, Kind: item.Kind, InterestID: item.InterestID, WatchID: item.WatchID, ParentID: item.ParentID, Title: item.Title, Summary: item.Summary, ContentVersion: item.ContentVersion, TodoState: item.TodoState, RemindAt: item.RemindAt, AcknowledgedContentVersion: item.AcknowledgedContentVersion, StateVersion: item.StateVersion}
+}
+
+func contextSnapshot(ctx context.Context, db *sql.Tx, settings settingsRow, now int64) (runContextSnapshot, error) {
+	interests, err := activeInterests(ctx, db)
+	if err != nil {
+		return runContextSnapshot{}, err
+	}
+	attention, err := attentionItems(ctx, db, now)
+	if err != nil {
+		return runContextSnapshot{}, err
+	}
+	return runContextSnapshot{Interests: interests, Attention: attention, Contexts: map[string]string{"AGENTS.md": settings.agentsMD, "USER.md": settings.userMD}}, nil
+}
+
+func contextPage[T any](runID, collection string, items []T, offset int) (map[string]any, error) {
+	if offset < 0 || offset > len(items) {
+		return nil, Invalid("Continuation cursor is not in this collection")
+	}
+	end := min(offset+contextPageSize, len(items))
+	for end > offset+1 {
+		encoded, err := json.Marshal(items[offset:end])
+		if err != nil {
+			return nil, err
+		}
+		if len(encoded) <= contextPageBytes {
+			break
+		}
+		end--
+	}
+	result := map[string]any{"collection": collection, "items": items[offset:end]}
+	if end < len(items) {
+		result["next_cursor"] = encodeContextCursor(contextCursor{RunID: runID, Collection: collection, Offset: end})
+	}
+	return result, nil
+}
+
+func firstContextPages(snapshot runContextSnapshot, runID string) (map[string]any, error) {
+	interests, err := contextPage(runID, "interests", snapshot.Interests, 0)
+	if err != nil {
+		return nil, err
+	}
+	attention, err := contextPage(runID, "attention_items", snapshot.Attention, 0)
+	if err != nil {
+		return nil, err
+	}
+	brief := map[string]any{
+		"interests":       interests["items"],
+		"attention_items": attention["items"],
+		"contexts":        snapshot.Contexts,
+		"continuations":   map[string]any{},
+	}
+	continuations := brief["continuations"].(map[string]any)
+	if cursor, ok := interests["next_cursor"]; ok {
+		continuations["interests"] = cursor
+	}
+	if cursor, ok := attention["next_cursor"]; ok {
+		continuations["attention_items"] = cursor
+	}
+	return brief, nil
+}
+
+func loadRunContext(ctx context.Context, db querier, runID string) (runContextSnapshot, error) {
+	canonical, err := resolveID(ctx, db, "runs", runID)
+	if err != nil {
+		return runContextSnapshot{}, err
+	}
+	var raw string
+	if err = db.QueryRowContext(ctx, "SELECT context_snapshot FROM runs WHERE id=?", canonical).Scan(&raw); err != nil {
+		return runContextSnapshot{}, missing(err)
+	}
+	var snapshot runContextSnapshot
+	if err = json.Unmarshal([]byte(raw), &snapshot); err != nil {
+		return runContextSnapshot{}, err
+	}
+	return snapshot, nil
+}
+
 func (a *App) StartRun(ctx context.Context, input StartRun) (json.RawMessage, error) {
 	return a.mutate(ctx, input.RequestID, "POST /runs", input, func(tx *sql.Tx) (any, error) {
 		if input.RunnerLabel == "" {
-			return nil, Invalid("runner_label is required")
+			input.RunnerLabel = "agent"
 		}
 		now := a.Now().UTC()
 		nowMillis := now.UnixMilli()
@@ -228,7 +407,7 @@ func (a *App) StartRun(ctx context.Context, input StartRun) (json.RawMessage, er
 		var active string
 		err = tx.QueryRowContext(ctx, `SELECT id FROM runs WHERE status='running'`).Scan(&active)
 		if err == nil {
-			return nil, &Error{Status: 409, Code: "run_in_progress", Message: "Another run holds the global lease.", Retryable: true, Details: map[string]any{"run_id": active}}
+			return nil, &Error{Status: 409, Code: "run_in_progress", Message: "Another run is already active.", Retryable: true, Details: map[string]any{"run_id": active}}
 		}
 		if !errors.Is(err, sql.ErrNoRows) {
 			return nil, err
@@ -253,10 +432,18 @@ func (a *App) StartRun(ctx context.Context, input StartRun) (json.RawMessage, er
 		if err != nil {
 			return nil, err
 		}
+		snapshot, err := contextSnapshot(ctx, tx, settings, nowMillis)
+		if err != nil {
+			return nil, err
+		}
+		snapshotJSON, err := json.Marshal(snapshot)
+		if err != nil {
+			return nil, err
+		}
 		id := uuid.NewString()
 		selectedJSON, _ := json.Marshal(selected)
 		lease := now.Add(runLease)
-		_, err = tx.ExecContext(ctx, `INSERT INTO runs(id,runner_label,status,started_at,lease_expires_at,selected_watches,after_seq,through_seq) VALUES(?,?,'running',?,?,?,?,?)`, id, input.RunnerLabel, nowMillis, lease.UnixMilli(), string(selectedJSON), after, through)
+		_, err = tx.ExecContext(ctx, `INSERT INTO runs(id,runner_label,status,started_at,lease_expires_at,selected_watches,after_seq,through_seq,context_snapshot) VALUES(?,?,'running',?,?,?,?,?,?)`, id, input.RunnerLabel, nowMillis, lease.UnixMilli(), string(selectedJSON), after, through, string(snapshotJSON))
 		if err != nil {
 			return nil, err
 		}
@@ -264,38 +451,31 @@ func (a *App) StartRun(ctx context.Context, input StartRun) (json.RawMessage, er
 		if err != nil {
 			return nil, err
 		}
-		return map[string]any{"run": run, "brief": map[string]any{
-			"watches": selected, "after_seq": after, "through_seq": through, "more_due_count": more,
-			"contexts": map[string]string{"AGENTS.md": settings.agentsMD, "USER.md": settings.userMD},
-		}}, nil
+		brief, err := firstContextPages(snapshot, id)
+		if err != nil {
+			return nil, err
+		}
+		brief["watches"] = selected
+		brief["after_seq"] = after
+		brief["through_seq"] = through
+		brief["more_due_count"] = more
+		changes, nextChanges, err := eventsPage(ctx, tx, after, through, "", contextPageSize)
+		if err != nil {
+			return nil, err
+		}
+		brief["changes"] = changes
+		if nextChanges != "" {
+			brief["changes_next_cursor"] = nextChanges
+		}
+		return map[string]any{"run": run, "brief": brief}, nil
 	})
 }
 
-func liveRun(run Run, now time.Time) error {
+func liveRun(run Run) error {
 	if run.Status != "running" {
 		return &Error{Status: 409, Code: "run_finished", Message: "Run is no longer active"}
 	}
-	if !run.LeaseExpiresAt.After(now) {
-		return &Error{Status: 409, Code: "lease_expired", Message: "Run lease expired"}
-	}
 	return nil
-}
-func (a *App) RenewRun(ctx context.Context, id string, input RenewRun) (json.RawMessage, error) {
-	return a.mutate(ctx, input.RequestID, "POST /runs/"+id+"/renew", input, func(tx *sql.Tx) (any, error) {
-		run, err := getRun(ctx, tx, id)
-		if err != nil {
-			return nil, err
-		}
-		now := a.Now().UTC()
-		if err = liveRun(run, now); err != nil {
-			return nil, err
-		}
-		_, err = tx.ExecContext(ctx, `UPDATE runs SET lease_expires_at=? WHERE id=?`, now.Add(runLease).UnixMilli(), id)
-		if err != nil {
-			return nil, err
-		}
-		return getRun(ctx, tx, id)
-	})
 }
 
 func (a *App) FinishRun(ctx context.Context, id string, input FinishRun) (json.RawMessage, error) {
@@ -304,11 +484,13 @@ func (a *App) FinishRun(ctx context.Context, id string, input FinishRun) (json.R
 		if err != nil {
 			return nil, err
 		}
+		id = run.ID
 		now := a.Now().UTC()
-		if err = liveRun(run, now); err != nil {
+		if err = liveRun(run); err != nil {
 			return nil, err
 		}
 		var success, partial int
+		covered := map[string]bool{}
 		rows, err := tx.QueryContext(ctx, `SELECT status,count(*) FROM watch_results WHERE run_id=? GROUP BY status`, id)
 		if err != nil {
 			return nil, err
@@ -330,6 +512,32 @@ func (a *App) FinishRun(ctx context.Context, id string, input FinishRun) (json.R
 		}
 		rows.Close()
 		total := len(run.SelectedWatches)
+		resultRows, err := tx.QueryContext(ctx, `SELECT watch_id FROM watch_results WHERE run_id=?`, id)
+		if err != nil {
+			return nil, err
+		}
+		for resultRows.Next() {
+			var watchID string
+			if err = resultRows.Scan(&watchID); err != nil {
+				resultRows.Close()
+				return nil, err
+			}
+			covered[watchID] = true
+		}
+		if err = resultRows.Err(); err != nil {
+			resultRows.Close()
+			return nil, err
+		}
+		resultRows.Close()
+		missingWatches := []string{}
+		for _, selected := range run.SelectedWatches {
+			if !covered[selected.ID] {
+				missingWatches = append(missingWatches, selected.ID)
+			}
+		}
+		if len(missingWatches) > 0 {
+			return nil, &Error{Status: 409, Code: "watch_coverage_missing", Message: "Every selected Watch needs a terminal result before the run can finish", Retryable: true, Details: map[string]any{"watch_ids": missingWatches}}
+		}
 		status := "failed"
 		if total == 0 || success == total {
 			status = "completed"
@@ -370,7 +578,84 @@ func (a *App) Changes(ctx context.Context, after, through int64) ([]Event, error
 	if after < 0 || through < after {
 		return nil, Invalid("expected 0 <= after_seq <= through_seq")
 	}
-	rows, err := a.Store.DB.QueryContext(ctx, `SELECT seq,occurred_at,actor,entity_type,entity_id,change_type,payload FROM events WHERE seq>? AND seq<=? AND (actor='user' OR entity_type='proposal') ORDER BY seq`, after, through)
+	return eventsBetween(ctx, a.Store.DB, after, through)
+}
+
+func encodeEventCursor(seq int64) string {
+	return base64.RawURLEncoding.EncodeToString([]byte(strconv.FormatInt(seq, 10)))
+}
+
+func decodeEventCursor(cursor string) (int64, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(cursor)
+	if err != nil {
+		return 0, Invalid("Invalid continuation cursor")
+	}
+	seq, err := strconv.ParseInt(string(decoded), 10, 64)
+	if err != nil || seq < 0 {
+		return 0, Invalid("Invalid continuation cursor")
+	}
+	return seq, nil
+}
+
+func eventsPage(ctx context.Context, db rowsQuerier, after, through int64, cursor string, limit int) ([]Event, string, error) {
+	if after < 0 || through < after {
+		return nil, "", Invalid("expected 0 <= after_seq <= through_seq")
+	}
+	if limit < 1 || limit > 100 {
+		return nil, "", Invalid("limit must be between 1 and 100")
+	}
+	start := after
+	if cursor != "" {
+		decoded, err := decodeEventCursor(cursor)
+		if err != nil {
+			return nil, "", err
+		}
+		if decoded <= after || decoded > through {
+			return nil, "", Invalid("Continuation cursor is not in this change range")
+		}
+		start = decoded
+	}
+	rows, err := db.QueryContext(ctx, `SELECT seq,occurred_at,actor,entity_type,entity_id,change_type,payload FROM events WHERE seq>? AND seq<=? AND (actor='user' OR entity_type='proposal') ORDER BY seq LIMIT ?`, start, through, limit+1)
+	if err != nil {
+		return nil, "", err
+	}
+	defer rows.Close()
+	items := []Event{}
+	for rows.Next() {
+		var item Event
+		var occurred int64
+		var raw string
+		if err = rows.Scan(&item.Seq, &occurred, &item.Actor, &item.EntityType, &item.EntityID, &item.ChangeType, &raw); err != nil {
+			return nil, "", err
+		}
+		item.OccurredAt = time.UnixMilli(occurred).UTC()
+		item.Payload = json.RawMessage(raw)
+		items = append(items, item)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, "", err
+	}
+	if len(items) <= limit {
+		return items, "", nil
+	}
+	items = items[:limit]
+	return items, encodeEventCursor(items[len(items)-1].Seq), nil
+}
+
+func (a *App) ChangesPage(ctx context.Context, after, through int64, cursor string, limit int) (map[string]any, error) {
+	items, next, err := eventsPage(ctx, a.Store.DB, after, through, cursor, limit)
+	if err != nil {
+		return nil, err
+	}
+	result := map[string]any{"items": items}
+	if next != "" {
+		result["next_cursor"] = next
+	}
+	return result, nil
+}
+
+func eventsBetween(ctx context.Context, db rowsQuerier, after, through int64) ([]Event, error) {
+	rows, err := db.QueryContext(ctx, `SELECT seq,occurred_at,actor,entity_type,entity_id,change_type,payload FROM events WHERE seq>? AND seq<=? AND (actor='user' OR entity_type='proposal') ORDER BY seq`, after, through)
 	if err != nil {
 		return nil, err
 	}
@@ -391,6 +676,51 @@ func (a *App) Changes(ctx context.Context, after, through int64) ([]Event, error
 }
 
 func (a *App) Brief(ctx context.Context) (map[string]any, error) {
+	return a.BriefPage(ctx, "")
+}
+
+func (a *App) BriefPage(ctx context.Context, cursor string) (map[string]any, error) {
+	if cursor != "" {
+		decoded, err := decodeContextCursor(cursor)
+		if err != nil {
+			return nil, err
+		}
+		var snapshot runContextSnapshot
+		if decoded.RunID != "" {
+			snapshot, err = loadRunContext(ctx, a.Store.DB, decoded.RunID)
+		} else {
+			var tx *sql.Tx
+			tx, err = a.Store.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
+			if err == nil {
+				settings, settingsErr := readSettings(ctx, tx)
+				if settingsErr == nil {
+					snapshot, err = contextSnapshot(ctx, tx, settings, a.Now().UTC().UnixMilli())
+				} else {
+					err = settingsErr
+				}
+				_ = tx.Rollback()
+			}
+		}
+		if err != nil {
+			return nil, err
+		}
+		var page map[string]any
+		switch decoded.Collection {
+		case "interests":
+			page, err = contextPage(decoded.RunID, decoded.Collection, snapshot.Interests, decoded.Offset)
+		case "attention_items":
+			page, err = contextPage(decoded.RunID, decoded.Collection, snapshot.Attention, decoded.Offset)
+		}
+		if err != nil {
+			return nil, err
+		}
+		page["contexts"] = snapshot.Contexts
+		if decoded.RunID != "" {
+			page["run_id"] = decoded.RunID
+		}
+		return page, nil
+	}
+
 	tx, err := a.Store.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
@@ -414,22 +744,35 @@ func (a *App) Brief(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	if err = tx.Commit(); err != nil {
-		return nil, err
-	}
-	items, err := a.Items(ctx, ItemFilters{View: "attention"})
+	snapshot, err := contextSnapshot(ctx, tx, settings, now.UnixMilli())
 	if err != nil {
 		return nil, err
 	}
-	attention := make([]AttentionItem, len(items))
-	for index, item := range items {
-		attention[index] = AttentionItem{ID: item.ID, Kind: item.Kind, InterestID: item.InterestID, WatchID: item.WatchID, ParentID: item.ParentID, Title: item.Title, Summary: item.Summary, ContentVersion: item.ContentVersion, TodoState: item.TodoState, RemindAt: item.RemindAt, AcknowledgedContentVersion: item.AcknowledgedContentVersion, StateVersion: item.StateVersion}
+	changes, nextChanges, err := eventsPage(ctx, tx, after, through, "", contextPageSize)
+	if err != nil {
+		return nil, err
+	}
+	if err = tx.Commit(); err != nil {
+		return nil, err
+	}
+	brief, err := firstContextPages(snapshot, "")
+	if err != nil {
+		return nil, err
+	}
+	brief["watches"] = selected
+	brief["more_due_count"] = more
+	brief["changes"] = map[string]int64{"after_seq": after, "through_seq": through}
+	brief["changes_items"] = changes
+	if nextChanges != "" {
+		brief["changes_next_cursor"] = nextChanges
 	}
 	health, err := a.OperationalHealth(ctx)
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"now": now, "watches": selected, "more_due_count": more, "changes": map[string]int64{"after_seq": after, "through_seq": through}, "attention_items": attention, "contexts": map[string]string{"AGENTS.md": settings.agentsMD, "USER.md": settings.userMD}, "health": health}, nil
+	brief["now"] = now
+	brief["health"] = health
+	return brief, nil
 }
 
 type WatchHealth struct {
