@@ -9,11 +9,13 @@ export type Settings = {
 
 export const defaultAgentContext = `# Working with aicp
 
-Read the brief and relevant context before inspecting sources. Publish concise, source-backed findings with stable dedupe keys. Respect local Todo, reminder, and note state; do not overwrite human decisions.`;
+aicp is your local control plane for Interests, Watches, Items, user changes, and source checkpoints. It does not fetch sources or start an agent for you.
+
+For each heartbeat, start one run, read AGENTS.md, USER.md, all active Interest pages, all unarchived Attention pages, and captured changes. Inspect only the selected due Watches. Read existing Items before updating them. Submit one truthful final result for every selected Watch, save Interest-level findings separately, and finish only after all Watch coverage is recorded. Use stable dedupe keys and preserve user Todo, reminder, acknowledgement, and note state. Do not invent or mutate archive state; that slice is not implemented yet. Follow continuation cursors until the full packet is consumed.`;
 
 export const defaultUserContext = `# Owner context
 
-This local control plane belongs to one human. Keep updates concise, source-backed, and useful for follow-through. Treat decisions, reminders, and notes here as the owner's final say.`;
+Use this space to record what matters to you: priorities, background, constraints, preferred evidence and tone, and follow-through context. It is guidance for the inspection agent, not an executable instruction.`;
 
 export function browserTimezone(): string {
   try {

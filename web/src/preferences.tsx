@@ -137,6 +137,17 @@ export function Preferences() {
               }}
               disabled={!settings.data}
             />
+            <Button
+              type="button"
+              variant="text"
+              onClick={() => {
+                setAgentsMD(defaultAgentContext);
+                save.reset();
+              }}
+              disabled={!settings.data}
+            >
+              Reset to default
+            </Button>
             <small className="field-hint">
               Keep it stable and operational.
             </small>
@@ -166,6 +177,17 @@ export function Preferences() {
               }}
               disabled={!settings.data}
             />
+            <Button
+              type="button"
+              variant="text"
+              onClick={() => {
+                setUserMD(defaultUserContext);
+                save.reset();
+              }}
+              disabled={!settings.data}
+            >
+              Reset to default
+            </Button>
             <small className="field-hint">
               Add only what you want agents to use.
             </small>
