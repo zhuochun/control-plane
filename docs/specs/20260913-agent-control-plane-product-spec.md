@@ -256,7 +256,7 @@ If a stored report version is unsupported, show the fixed summary and sources wi
 | P0-08 | Source changes to resolved; the existing report and observed status update while local Todo/reminder state is preserved. |
 | P0-09 | Accept/reject creation and deprecation proposals; changes persist, stale proposals conflict, and inactive Watches disappear from eligible work. |
 | P0-10 | One Watch succeeds and another fails; only the successful checkpoint advances, coverage remains truthful, and the failed Watch is offered again. |
-| P0-11 | Concurrent starts do not create two active runs; an expired run cannot publish late results, and a new run can proceed. |
+| P0-11 | Concurrent starts do not create two active runs; a run remains active during long inspections. The owner can explicitly abandon an interrupted run, reject late results, and start another run without losing submitted findings or acknowledging unconsumed changes. |
 | P0-12 | Obtain a context packet by item ID in a new session; it contains the parent and any external references, facts, source references, user changes, and next steps without old chat history. |
 | P0-13 | The cost fixture produces a source-backed 18% analysis, while an incomparable-period fixture explicitly reports that comparison is unavailable. |
 | P0-14 | Invalid report/action JSON receives a useful error. An unsupported stored report version falls back without losing sources or standard item controls. |

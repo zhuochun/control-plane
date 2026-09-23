@@ -32,8 +32,9 @@ test("a report survives Todo, reminder, reload, and Done", async ({
 
   await page.goto("http://127.0.0.1:7331/");
   await page
-    .getByRole("link", { name: /Confirm the rollout sequence/ })
+    .getByRole("button", { name: /Confirm the rollout sequence/ })
     .click();
+  await page.getByRole("link", { name: /Full detail/ }).click();
   await expect(page.getByRole("heading", { name: "Options" })).toBeVisible();
   await expect(page.getByRole("table")).toBeVisible();
   const source = page.getByRole("link", { name: /Rollout discussion/ });
@@ -85,7 +86,7 @@ test("a person can accept an agent proposal and inspect its history", async ({
   await page.getByRole("button", { name: "Accept" }).click();
   await expect(page.getByText("Useful signal:")).toHaveCount(0);
 
-  await page.getByRole("link", { name: "Interests" }).click();
+  await page.getByRole("link", { name: "Monitoring" }).click();
   await expect(page.getByText("Gentle release watch")).toBeVisible();
   await page.getByRole("link", { name: "Activity" }).click();
   await expect(page.getByText("Human decisions")).toBeVisible();
@@ -93,6 +94,34 @@ test("a person can accept an agent proposal and inspect its history", async ({
     page.getByText(/this keeps release changes together/),
   ).toBeVisible();
   await expect(page.getByText("accepted")).toBeVisible();
+});
+
+test("owner can inspect and abandon an interrupted run", async ({ page, request }) => {
+  const marker = crypto.randomUUID();
+  const interestResponse = await request.post("/api/v1/interests", {
+    data: { title: `Recovery ${marker}`, instructions_md: "Check the source" },
+  });
+  expect(interestResponse.ok()).toBeTruthy();
+  const interest = await interestResponse.json();
+  const watchResponse = await request.post("/api/v1/watches", {
+    data: { interest_id: interest.id, source: { kind: "web", locator: `https://example.com/${marker}` }, instructions_md: "Inspect" },
+  });
+  expect(watchResponse.ok()).toBeTruthy();
+  const started = await request.post("/api/v1/runs", { data: { runner_label: "e2e-agent" } });
+  expect(started.ok()).toBeTruthy();
+  const run = await started.json();
+
+  await page.goto("/activity");
+  await expect(page.getByRole("heading", { name: "Active inspection" })).toBeVisible();
+  await expect(page.getByText(`https://example.com/${marker}`, { exact: false })).toBeVisible();
+  await expect(page.getByText("No result", { exact: false })).toBeVisible();
+  await page.getByRole("button", { name: "Abandon interrupted run" }).click();
+  await page.getByRole("textbox", { name: "Reason" }).fill("agent exited before inspection");
+  await page.getByRole("button", { name: "Abandon run", exact: true }).click();
+  await expect(page.getByRole("heading", { name: "Active inspection" })).toHaveCount(0);
+  const detail = await request.get(`/api/v1/runs/${run.run.id}`);
+  expect(detail.ok()).toBeTruthy();
+  expect((await detail.json()).run.summary).toContain("agent exited before inspection");
 });
 
 test("preferences keep browser defaults and expose agent context", async ({
