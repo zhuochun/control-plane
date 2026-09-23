@@ -1,5 +1,7 @@
 // Package store owns the SQLite connection, directory lock, and migrations.
-// Only the server opens a Store; adapters communicate through HTTP.
+// The server owns the long-lived Store; `aicp init` opens one briefly to apply
+// migrations before the server is started. Other adapters communicate through
+// HTTP.
 package store
 
 import (
@@ -82,7 +84,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if version > 2 {
+	if version > 3 {
 		return fmt.Errorf("database schema %d is newer than this aicp supports; upgrade aicp", version)
 	}
 	if _, err := provider.Up(ctx); err != nil {

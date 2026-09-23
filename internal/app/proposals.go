@@ -85,7 +85,11 @@ func scanProposal(row scanner) (Proposal, error) {
 	return item, nil
 }
 func getProposal(ctx context.Context, db querier, id string) (Proposal, error) {
-	return scanProposal(db.QueryRowContext(ctx, "SELECT "+proposalColumns+" FROM proposals WHERE id=?", id))
+	canonical, err := resolveID(ctx, db, "proposals", id)
+	if err != nil {
+		return Proposal{}, err
+	}
+	return scanProposal(db.QueryRowContext(ctx, "SELECT "+proposalColumns+" FROM proposals WHERE id=?", canonical))
 }
 func (a *App) Proposal(ctx context.Context, id string) (Proposal, error) {
 	return getProposal(ctx, a.Store.DB, id)
@@ -236,9 +240,11 @@ func (a *App) applyProposal(ctx context.Context, tx *sql.Tx, p Proposal) error {
 		if err := strictPayload(p.Payload, &value); err != nil {
 			return err
 		}
-		if _, err := getInterest(ctx, tx, value.InterestID); err != nil {
+		interest, err := getInterest(ctx, tx, value.InterestID)
+		if err != nil {
 			return err
 		}
+		value.InterestID = interest.ID
 		item := Watch{ID: uuid.NewString(), InterestID: value.InterestID, Source: value.Source, InstructionsMD: value.InstructionsMD, IntervalSeconds: 7200, LookbackSeconds: 604800, State: "active"}
 		if value.IntervalSeconds.Set {
 			item.IntervalSeconds = value.IntervalSeconds.Value
@@ -253,7 +259,7 @@ func (a *App) applyProposal(ctx context.Context, tx *sql.Tx, p Proposal) error {
 			return err
 		}
 		source, _ := json.Marshal(item.Source)
-		_, err := tx.ExecContext(ctx, `INSERT INTO watches(id,interest_id,source,instructions_md,interval_seconds,lookback_seconds,state,revision,next_due_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,1,?,?,?)`, item.ID, item.InterestID, string(source), item.InstructionsMD, item.IntervalSeconds, item.LookbackSeconds, item.State, now, now, now)
+		_, err = tx.ExecContext(ctx, `INSERT INTO watches(id,interest_id,source,instructions_md,interval_seconds,lookback_seconds,state,revision,next_due_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,1,?,?,?)`, item.ID, item.InterestID, string(source), item.InstructionsMD, item.IntervalSeconds, item.LookbackSeconds, item.State, now, now, now)
 		if err != nil {
 			return err
 		}

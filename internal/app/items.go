@@ -67,7 +67,7 @@ type Item struct {
 }
 
 type PutItem struct {
-	RequestID              string   `json:"request_id"`
+	RequestID              string   `json:"request_id,omitempty"`
 	DedupeKey              string   `json:"dedupe_key"`
 	ExpectedContentVersion int64    `json:"expected_content_version"`
 	Kind                   string   `json:"kind"`
@@ -120,7 +120,11 @@ func scanItem(row scanner) (Item, error) {
 }
 
 func getItem(ctx context.Context, db querier, id string) (Item, error) {
-	return scanItem(db.QueryRowContext(ctx, "SELECT "+itemColumns+" FROM items WHERE id=?", id))
+	canonical, err := resolveID(ctx, db, "items", id)
+	if err != nil {
+		return Item{}, err
+	}
+	return scanItem(db.QueryRowContext(ctx, "SELECT "+itemColumns+" FROM items WHERE id=?", canonical))
 }
 func (a *App) Item(ctx context.Context, id string) (Item, error) { return getItem(ctx, a.Store.DB, id) }
 
@@ -236,8 +240,46 @@ func (a *App) PutItem(ctx context.Context, id string, input PutItem) (json.RawMe
 	})
 }
 
+// UpsertInterestItem is the agent-facing path for a useful finding that is
+// related to an Interest but not to a selected Watch. It intentionally cannot
+// advance Watch coverage.
+func (a *App) UpsertInterestItem(ctx context.Context, input PutItem) (json.RawMessage, error) {
+	return a.mutate(ctx, input.RequestID, "POST /items/interest", input, func(tx *sql.Tx) (any, error) {
+		if input.InterestID == nil || strings.TrimSpace(*input.InterestID) == "" {
+			return nil, Invalid("interest_id is required for an Interest-level Item")
+		}
+		if input.WatchID != nil {
+			return nil, Invalid("Interest-level Items cannot contain watch_id")
+		}
+		interest, err := getInterest(ctx, tx, *input.InterestID)
+		if err != nil {
+			return nil, err
+		}
+		input.InterestID = &interest.ID
+		current, lookupErr := scanItem(tx.QueryRowContext(ctx, "SELECT "+itemColumns+" FROM items WHERE dedupe_key=?", input.DedupeKey))
+		if lookupErr == nil {
+			if current.WatchID != nil || current.InterestID == nil || *current.InterestID != interest.ID {
+				return nil, &Error{Status: 409, Code: "item_scope_conflict", Message: "The dedupe key belongs to an Item with a different Interest or Watch scope", Details: map[string]any{"id": current.ID, "interest_id": current.InterestID, "watch_id": current.WatchID}}
+			}
+		} else {
+			var problem *Error
+			if !errors.As(lookupErr, &problem) || problem.Status != 404 {
+				return nil, lookupErr
+			}
+		}
+		return a.putItemTx(ctx, tx, "", input)
+	})
+}
+
 // putItemTx is shared by direct item commands and atomic Watch publication.
 func (a *App) putItemTx(ctx context.Context, tx *sql.Tx, id string, input PutItem) (any, error) {
+	if id != "" {
+		canonical, err := resolveID(ctx, tx, "items", id)
+		if err != nil {
+			return nil, err
+		}
+		id = canonical
+	}
 	if err := validateItem(input); err != nil {
 		return nil, err
 	}
@@ -287,7 +329,7 @@ func (a *App) putItemTx(ctx context.Context, tx *sql.Tx, id string, input PutIte
 		return nil, &Error{Status: 409, Code: "content_conflict", Message: "dedupe_key belongs to another item", Details: map[string]any{"id": current.ID, "current_content_version": current.ContentVersion}}
 	}
 	if input.ExpectedContentVersion != current.ContentVersion {
-		return nil, &Error{Status: 409, Code: "content_conflict", Message: "Item content changed. Read it again before publishing.", Details: map[string]any{"id": current.ID, "current_content_version": current.ContentVersion}}
+		return nil, &Error{Status: 409, Code: "content_conflict", Message: "Item content changed. Read it again before saving.", Details: map[string]any{"id": current.ID, "current_content_version": current.ContentVersion}}
 	}
 	if input.InitialTodoState != "" {
 		return nil, Invalid("initial_todo_state is accepted only when creating an item")
@@ -328,6 +370,20 @@ type ItemFilters struct{ View, Kind, InterestID, WatchID, Query, DedupeKey strin
 func (a *App) Items(ctx context.Context, filter ItemFilters) ([]Item, error) {
 	query := "SELECT " + itemColumns + " FROM items WHERE 1=1"
 	args := []any{}
+	if filter.InterestID != "" {
+		canonical, err := resolveID(ctx, a.Store.DB, "interests", filter.InterestID)
+		if err != nil {
+			return nil, err
+		}
+		filter.InterestID = canonical
+	}
+	if filter.WatchID != "" {
+		canonical, err := resolveID(ctx, a.Store.DB, "watches", filter.WatchID)
+		if err != nil {
+			return nil, err
+		}
+		filter.WatchID = canonical
+	}
 	if filter.Kind != "" {
 		query += " AND kind=?"
 		args = append(args, filter.Kind)

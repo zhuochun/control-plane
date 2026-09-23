@@ -40,7 +40,7 @@ try {
     $interest = Invoke-Aicp @('interest','create','--file',(Write-Request 'interest' ([ordered]@{request_id='demo-interest';title='Delivery economics';instructions_md='Notice material cost changes and explain whether periods are comparable.'})),'--json')
     $watch = Invoke-Aicp @('watch','create','--file',(Write-Request 'watch' ([ordered]@{request_id='demo-watch';interest_id=$interest.id;source=[ordered]@{kind='fixture';locator='fixtures/demo-costs'};instructions_md='Compare the same workload and flag incomplete periods.';interval_seconds=7200;lookback_seconds=604800})),'--json')
 
-    $run1 = Invoke-Aicp @('run','start','--file',(Write-Request 'run-1' ([ordered]@{request_id='demo-run-1';runner_label='offline-fixture'})),'--json')
+    $run1 = Invoke-Aicp @('run','start','--runner-label','offline-fixture','--json')
     $observed = '2026-09-15T02:00:00Z'
     $source = @([ordered]@{id='costs';url='https://example.com/fixtures/costs';label='Comparable cost fixture';observed_at=$observed})
     $items = @(
@@ -48,20 +48,20 @@ try {
         [ordered]@{dedupe_key='demo:costs:incomplete';expected_content_version=0;kind='note';title='Incomplete period cannot be compared';summary='Comparison is unavailable because the current fixture covers only part of the period.';sources=$source;report=[ordered]@{schema_version=1;body_md='Comparison unavailable: the periods cover different durations. Wait for a complete period.'}}
     )
     $publish1 = [ordered]@{request_id='demo-publish-1';expected_watch_revision=1;status='success';coverage=[ordered]@{cursor_before=$null;cursor_after=[ordered]@{cycle=1};observed_through=$observed;limitations=@()};items=$items}
-    $result1 = Invoke-Aicp @('run','publish',$run1.run.id,$watch.id,'--file',(Write-Request 'publish-1' $publish1),'--json')
-    Invoke-Aicp @('run','finish',$run1.run.id,'--file',(Write-Request 'finish-1' ([ordered]@{request_id='demo-finish-1';summary='Published comparable and incomplete cost findings.'})),'--json') | Out-Null
+    $result1 = Invoke-Aicp @('run','submit',$watch.id,'--file',(Write-Request 'publish-1' $publish1),'--json')
+    Invoke-Aicp @('run','finish','--summary','Saved comparable and incomplete cost findings.','--json') | Out-Null
 
     $itemId = $result1.items[0].id
     Invoke-Aicp @('item','action',$itemId,'--file',(Write-Request 'todo' ([ordered]@{request_id='demo-todo';expected_state_version=1;action=[ordered]@{type='set_todo';state='todo'}})),'--json') | Out-Null
     Invoke-Aicp @('item','action',$itemId,'--file',(Write-Request 'reminder' ([ordered]@{request_id='demo-reminder';expected_state_version=2;action=[ordered]@{type='set_reminder';date='2099-09-16';timezone='Asia/Singapore'}})),'--json') | Out-Null
 
-    $run2 = Invoke-Aicp @('run','start','--file',(Write-Request 'run-2' ([ordered]@{request_id='demo-run-2';runner_label='offline-fixture';watch_ids=@($watch.id);force=$true})),'--json')
+    $run2 = Invoke-Aicp @('run','start','--runner-label','offline-fixture','--watch',$watch.id,'--force','--json')
     $items[0].expected_content_version = 1
     $items[0].summary = 'The comparable workload still shows an 18% reduction; the source now marks the review complete.'
     $items[0].report.body_md = "## Reconciled result`n`nThe same workload remains **18% lower**. Source status: review complete. The local follow-up remains yours to close."
     $publish2 = [ordered]@{request_id='demo-publish-2';expected_watch_revision=1;status='success';coverage=[ordered]@{cursor_before=[ordered]@{cycle=1};cursor_after=[ordered]@{cycle=2};observed_through='2026-09-15T04:00:00Z';limitations=@()};items=@($items[0])}
-    Invoke-Aicp @('run','publish',$run2.run.id,$watch.id,'--file',(Write-Request 'publish-2' $publish2),'--json') | Out-Null
-    Invoke-Aicp @('run','finish',$run2.run.id,'--file',(Write-Request 'finish-2' ([ordered]@{request_id='demo-finish-2';summary='Reconciled the completed source review.'})),'--json') | Out-Null
+    Invoke-Aicp @('run','submit',$watch.id,'--file',(Write-Request 'publish-2' $publish2),'--json') | Out-Null
+    Invoke-Aicp @('run','finish','--summary','Reconciled the completed source review.','--json') | Out-Null
 
     $final = Invoke-Aicp @('item','get',$itemId,'--json')
     if ($final.content_version -ne 2 -or $final.state_version -ne 3 -or $final.todo_state -ne 'todo' -or $null -eq $final.remind_at) { throw 'two-cycle state preservation check failed' }

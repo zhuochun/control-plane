@@ -14,17 +14,26 @@ type request func(*cobra.Command, string, string, any) error
 
 func configurationCommand(name, path string, send request) *cobra.Command {
 	root := &cobra.Command{Use: name, Short: "Manage " + name + " configuration"}
-	var cursor string
+	var cursor, state string
+	var all bool
 	var limit int
 	list := &cobra.Command{Use: "list", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		query := url.Values{"limit": {fmt.Sprint(limit)}}
 		if cursor != "" {
 			query.Set("cursor", cursor)
 		}
+		if state != "" {
+			query.Set("state", state)
+		}
+		if all {
+			query.Set("all", "1")
+		}
 		return send(cmd, "GET", path+"?"+query.Encode(), nil)
 	}}
 	list.Flags().StringVar(&cursor, "cursor", "", "Continuation cursor from a previous page")
 	list.Flags().IntVar(&limit, "limit", 50, "Page size (1–100)")
+	list.Flags().StringVar(&state, "state", "", "active, paused, deprecated, or all (default: active)")
+	list.Flags().BoolVar(&all, "all", false, "Include inactive records")
 	root.AddCommand(list, &cobra.Command{Use: "get <id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return send(cmd, "GET", path+"/"+url.PathEscape(args[0]), nil)
 	}})
@@ -46,7 +55,7 @@ func configurationCommand(name, path string, send request) *cobra.Command {
 			}
 			return send(cmd, method, target, body)
 		}}
-		command.Flags().StringVar(&file, "file", "", "JSON command file, or - for stdin; include request_id")
+		command.Flags().StringVar(&file, "file", "", "JSON command file, or - for stdin; request_id is optional")
 		_ = command.MarkFlagRequired("file")
 		root.AddCommand(command)
 	}

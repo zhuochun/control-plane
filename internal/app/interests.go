@@ -57,6 +57,7 @@ type UpdateInterest struct {
 type scanner interface{ Scan(...any) error }
 type querier interface {
 	QueryRowContext(context.Context, string, ...any) *sql.Row
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
 
 func missing(err error) error {
@@ -85,15 +86,32 @@ func scanInterest(row scanner) (Interest, error) {
 }
 
 func getInterest(ctx context.Context, db querier, id string) (Interest, error) {
-	return scanInterest(db.QueryRowContext(ctx, "SELECT "+interestColumns+" FROM interests WHERE id = ?", id))
+	canonical, err := resolveID(ctx, db, "interests", id)
+	if err != nil {
+		return Interest{}, err
+	}
+	return scanInterest(db.QueryRowContext(ctx, "SELECT "+interestColumns+" FROM interests WHERE id = ?", canonical))
 }
 
 func (a *App) Interest(ctx context.Context, id string) (Interest, error) {
 	return getInterest(ctx, a.Store.DB, id)
 }
 
-func (a *App) Interests(ctx context.Context) ([]Interest, error) {
-	rows, err := a.Store.DB.QueryContext(ctx, "SELECT "+interestColumns+" FROM interests ORDER BY created_at, id")
+func (a *App) Interests(ctx context.Context, states ...string) ([]Interest, error) {
+	state := "active"
+	if len(states) > 0 && states[0] != "" {
+		state = states[0]
+	}
+	query := "SELECT " + interestColumns + " FROM interests"
+	args := []any{}
+	if state != "all" {
+		if !validState(state) {
+			return nil, Invalid("state must be active, paused, deprecated, or all")
+		}
+		query += " WHERE state=?"
+		args = append(args, state)
+	}
+	rows, err := a.Store.DB.QueryContext(ctx, query+" ORDER BY created_at, id", args...)
 	if err != nil {
 		return nil, err
 	}
@@ -137,6 +155,7 @@ func (a *App) UpdateInterest(ctx context.Context, id string, input UpdateInteres
 		if err != nil {
 			return nil, err
 		}
+		id = item.ID
 		if input.ExpectedRevision != item.Revision {
 			return nil, revisionConflict(item.Revision)
 		}

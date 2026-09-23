@@ -4,7 +4,7 @@
   "title": "aicp Watch result v1",
   "type": "object",
   "additionalProperties": false,
-  "required": ["request_id", "expected_watch_revision", "status", "coverage", "items"],
+  "required": ["expected_watch_revision", "status", "coverage", "items"],
   "properties": {
     "request_id": {"type": "string", "minLength": 1},
     "expected_watch_revision": {"type": "integer", "minimum": 1},

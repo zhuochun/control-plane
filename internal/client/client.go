@@ -23,7 +23,24 @@ type Error struct {
 	Details   any
 }
 
-func (e *Error) Error() string { return e.Message }
+func (e *Error) Error() string {
+	if e.Code == "ambiguous_id" {
+		if details, ok := e.Details.(map[string]any); ok {
+			if values, ok := details["candidates"].([]any); ok && len(values) > 0 {
+				candidates := make([]string, 0, len(values))
+				for _, value := range values {
+					text := fmt.Sprint(value)
+					if index := strings.IndexByte(text, '-'); index > 0 {
+						text = text[:index]
+					}
+					candidates = append(candidates, text)
+				}
+				return e.Message + ": " + strings.Join(candidates, ", ")
+			}
+		}
+	}
+	return e.Message
+}
 
 func New(base string) *Client {
 	return &Client{BaseURL: strings.TrimRight(base, "/"), HTTP: &http.Client{Timeout: 30 * time.Second}}

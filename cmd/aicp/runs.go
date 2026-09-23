@@ -3,6 +3,7 @@ package main
 import (
 	"fmt"
 	"net/url"
+	"strings"
 
 	"github.com/spf13/cobra"
 )
@@ -24,44 +25,43 @@ func runCommand(send request) *cobra.Command {
 	root.AddCommand(&cobra.Command{Use: "get <id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return send(cmd, "GET", "/runs/"+url.PathEscape(args[0]), nil)
 	}})
-	for _, operation := range []string{"start", "renew", "finish"} {
-		operation := operation
-		var file string
-		use := operation
-		if operation != "start" {
-			use += " <run-id>"
+	var runnerLabel string
+	var watchIDs []string
+	var force bool
+	start := &cobra.Command{Use: "start", Args: cobra.NoArgs, Short: "Check in and receive one heartbeat work packet", RunE: func(cmd *cobra.Command, args []string) error {
+		body := map[string]any{"runner_label": runnerLabel, "force": force}
+		if len(watchIDs) > 0 {
+			body["watch_ids"] = watchIDs
 		}
-		command := &cobra.Command{Use: use, Args: func() cobra.PositionalArgs {
-			if operation == "start" {
-				return cobra.NoArgs
-			}
-			return cobra.ExactArgs(1)
-		}(), RunE: func(cmd *cobra.Command, args []string) error {
-			body, err := commandFile(cmd, file)
-			if err != nil {
-				return err
-			}
-			target := "/runs"
-			if operation != "start" {
-				target += "/" + url.PathEscape(args[0]) + "/" + operation
-			}
-			return send(cmd, "POST", target, body)
-		}}
-		command.Flags().StringVar(&file, "file", "", "JSON command file, or - for stdin")
-		_ = command.MarkFlagRequired("file")
-		root.AddCommand(command)
-	}
-	var publishFile string
-	publish := &cobra.Command{Use: "publish <run-id> <watch-id>", Args: cobra.ExactArgs(2), RunE: func(cmd *cobra.Command, args []string) error {
-		body, err := commandFile(cmd, publishFile)
+		return send(cmd, "POST", "/runs", body)
+	}}
+	start.Flags().StringVar(&runnerLabel, "runner-label", "", "Optional label for the external agent")
+	start.Flags().StringSliceVar(&watchIDs, "watch", nil, "Select a Watch (repeatable; normally due Watches are selected)")
+	start.Flags().BoolVar(&force, "force", false, "Run selected Watches even when not due")
+	root.AddCommand(start)
+	var summary string
+	var ackThroughSeq int64
+	finish := &cobra.Command{Use: "finish", Args: cobra.NoArgs, Short: "Check out after all selected Watches have coverage", RunE: func(cmd *cobra.Command, args []string) error {
+		body := map[string]any{"summary": summary}
+		if cmd.Flags().Changed("ack-through-seq") {
+			body["ack_through_seq"] = ackThroughSeq
+		}
+		return send(cmd, "POST", "/runs/finish", body)
+	}}
+	finish.Flags().StringVar(&summary, "summary", "", "Run summary")
+	finish.Flags().Int64Var(&ackThroughSeq, "ack-through-seq", 0, "Acknowledge the captured event range through this sequence")
+	root.AddCommand(finish)
+	var findingsFile string
+	findings := &cobra.Command{Use: "submit <watch-id>", Aliases: []string{"findings"}, Args: cobra.ExactArgs(1), Short: "Submit one final Watch finding result", RunE: func(cmd *cobra.Command, args []string) error {
+		body, err := commandFile(cmd, findingsFile)
 		if err != nil {
 			return err
 		}
-		return send(cmd, "PUT", "/runs/"+url.PathEscape(args[0])+"/watches/"+url.PathEscape(args[1])+"/result", body)
+		return send(cmd, "PUT", "/runs/watches/"+url.PathEscape(strings.TrimSpace(args[0]))+"/findings", body)
 	}}
-	publish.Flags().StringVar(&publishFile, "file", "", "JSON Watch-result file, or - for stdin")
-	_ = publish.MarkFlagRequired("file")
-	root.AddCommand(publish)
+	findings.Flags().StringVar(&findingsFile, "file", "", "JSON Watch findings payload, or - for stdin")
+	_ = findings.MarkFlagRequired("file")
+	root.AddCommand(findings)
 	return root
 }
 
