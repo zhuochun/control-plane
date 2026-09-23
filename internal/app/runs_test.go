@@ -105,20 +105,23 @@ func TestRunSelectionAndChangeAcknowledgement(t *testing.T) {
 		t.Fatalf("change cursor not advanced: %s %v", acknowledged, err)
 	}
 	now = now.Add(time.Minute)
-	raw, err = a.StartRun(ctx, StartRun{RequestID: "lease", RunnerLabel: "test-runner", WatchIDs: empty})
+	raw, err = a.StartRun(ctx, StartRun{RequestID: "long-run", RunnerLabel: "test-runner"})
 	if err != nil {
 		t.Fatal(err)
 	}
-	var leased struct {
+	var longRun struct {
 		Run Run `json:"run"`
 	}
-	_ = json.Unmarshal(raw, &leased)
+	_ = json.Unmarshal(raw, &longRun)
 	now = now.Add(31 * time.Minute)
-	if _, err = a.StartRun(ctx, StartRun{RequestID: "after-expiry", RunnerLabel: "test-runner", WatchIDs: empty}); err != nil {
-		t.Fatal("expired lease blocked a new run:", err)
+	if _, err = a.StartRun(ctx, StartRun{RequestID: "overlap-after-30-minutes", RunnerLabel: "test-runner", WatchIDs: empty}); err == nil {
+		t.Fatal("long-running inspection lost the active run slot")
 	}
-	if _, err = a.FinishRun(ctx, leased.Run.ID, FinishRun{RequestID: "late-finish"}); err == nil {
-		t.Fatal("finished a recovered run")
+	if _, err = a.SubmitWatchFindings(ctx, longRun.Run.ID, watch.ID, SubmitWatchFindings{RequestID: "long-run-coverage", ExpectedWatchRevision: watch.Revision, Status: "failed", Error: "source unavailable", Coverage: Coverage{CursorBefore: nil, ObservedThrough: now}}); err != nil {
+		t.Fatal("long-running inspection could not submit coverage:", err)
+	}
+	if _, err = a.FinishRun(ctx, longRun.Run.ID, FinishRun{RequestID: "long-run-finish"}); err != nil {
+		t.Fatal("long-running inspection could not finish:", err)
 	}
 }
 
