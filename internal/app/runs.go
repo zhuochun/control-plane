@@ -13,7 +13,6 @@ import (
 	"github.com/google/uuid"
 )
 
-const runLease = 30 * time.Minute
 const contextPageSize = 50
 const contextPageBytes = 64 << 10
 
@@ -52,7 +51,6 @@ type Run struct {
 	Status          string          `json:"status"`
 	StartedAt       time.Time       `json:"started_at"`
 	EndedAt         *time.Time      `json:"ended_at"`
-	LeaseExpiresAt  time.Time       `json:"-"`
 	SelectedWatches []SelectedWatch `json:"-"`
 	AfterSeq        int64           `json:"after_seq"`
 	ThroughSeq      int64           `json:"through_seq"`
@@ -81,15 +79,14 @@ type FinishRun struct {
 
 func scanRun(row scanner) (Run, error) {
 	var run Run
-	var started, lease int64
+	var started int64
 	var ended sql.NullInt64
 	var selected string
-	err := row.Scan(&run.ID, &run.RunnerLabel, &run.Status, &started, &ended, &lease, &selected, &run.AfterSeq, &run.ThroughSeq, &run.Summary)
+	err := row.Scan(&run.ID, &run.RunnerLabel, &run.Status, &started, &ended, &selected, &run.AfterSeq, &run.ThroughSeq, &run.Summary)
 	if err != nil {
 		return run, missing(err)
 	}
 	run.StartedAt = time.UnixMilli(started).UTC()
-	run.LeaseExpiresAt = time.UnixMilli(lease).UTC()
 	if ended.Valid {
 		value := time.UnixMilli(ended.Int64).UTC()
 		run.EndedAt = &value
@@ -100,7 +97,7 @@ func scanRun(row scanner) (Run, error) {
 	return run, nil
 }
 
-const runColumns = `id,runner_label,status,started_at,ended_at,lease_expires_at,selected_watches,after_seq,through_seq,summary`
+const runColumns = `id,runner_label,status,started_at,ended_at,selected_watches,after_seq,through_seq,summary`
 
 func getRun(ctx context.Context, db querier, id string) (Run, error) {
 	canonical, err := resolveID(ctx, db, "runs", id)
@@ -400,12 +397,8 @@ func (a *App) StartRun(ctx context.Context, input StartRun) (json.RawMessage, er
 		}
 		now := a.Now().UTC()
 		nowMillis := now.UnixMilli()
-		_, err := tx.ExecContext(ctx, `UPDATE runs SET status='expired',ended_at=? WHERE status='running' AND lease_expires_at<=?`, nowMillis, nowMillis)
-		if err != nil {
-			return nil, err
-		}
 		var active string
-		err = tx.QueryRowContext(ctx, `SELECT id FROM runs WHERE status='running'`).Scan(&active)
+		err := tx.QueryRowContext(ctx, `SELECT id FROM runs WHERE status='running'`).Scan(&active)
 		if err == nil {
 			return nil, &Error{Status: 409, Code: "run_in_progress", Message: "Another run is already active.", Retryable: true, Details: map[string]any{"run_id": active}}
 		}
@@ -442,8 +435,9 @@ func (a *App) StartRun(ctx context.Context, input StartRun) (json.RawMessage, er
 		}
 		id := uuid.NewString()
 		selectedJSON, _ := json.Marshal(selected)
-		lease := now.Add(runLease)
-		_, err = tx.ExecContext(ctx, `INSERT INTO runs(id,runner_label,status,started_at,lease_expires_at,selected_watches,after_seq,through_seq,context_snapshot) VALUES(?,?,'running',?,?,?,?,?,?)`, id, input.RunnerLabel, nowMillis, lease.UnixMilli(), string(selectedJSON), after, through, string(snapshotJSON))
+		// The legacy schema still requires lease_expires_at. Runs no longer expire
+		// automatically because the heartbeat contract has no renewal step.
+		_, err = tx.ExecContext(ctx, `INSERT INTO runs(id,runner_label,status,started_at,lease_expires_at,selected_watches,after_seq,through_seq,context_snapshot) VALUES(?,?,'running',?,?,?,?,?,?)`, id, input.RunnerLabel, nowMillis, 0, string(selectedJSON), after, through, string(snapshotJSON))
 		if err != nil {
 			return nil, err
 		}

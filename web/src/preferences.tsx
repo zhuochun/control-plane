@@ -23,8 +23,8 @@ export function Preferences() {
   useEffect(() => {
     if (!settings.data || loaded) return;
     setTimezone(settings.data.timezone || "browser");
-    setAgentsMD(settings.data.agents_md || defaultAgentContext);
-    setUserMD(settings.data.user_md || defaultUserContext);
+    setAgentsMD(settings.data.agents_md);
+    setUserMD(settings.data.user_md);
     setLoaded(true);
   }, [loaded, settings.data]);
 
