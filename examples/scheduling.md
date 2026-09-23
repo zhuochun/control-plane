@@ -3,7 +3,7 @@
 Keep `aicp serve` running independently, then invoke one checked-in wrapper every
 two hours. The wrapper uses an OS file lock, so overlap is a successful skip.
 Redirect standard output and error in the scheduler to retain agent and setup
-failures. A source or harness failure must be published as a failed run, never as
+failures. A source or harness failure must be reported as a failed run, never as
 an empty successful scan.
 
 On Windows, create a Task Scheduler action using absolute paths:

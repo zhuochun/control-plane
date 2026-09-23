@@ -1,13 +1,37 @@
 # aicp
 
 **aicp** is a small local control plane for agent work. Agents inspect sources
-with their existing tools and publish source-backed reports. You decide what
+with their existing tools and save source-backed findings. You decide what
 becomes a Todo, when to be reminded, and whether proposed monitoring changes are
 accepted.
 
 The application is one Go executable with an embedded React portal and a local
 SQLite database. It binds only to `127.0.0.1:7331`. Source credentials and agent
 scheduling stay outside aicp.
+
+## Domain model
+
+The core relationship is:
+
+```text
+Interest = why it matters
+    └── Watch = where and how to inspect it
+          └── Agent run = one external inspection attempt
+                └── Items = findings, reports, tasks, and outcomes
+```
+
+An **Interest** is the durable purpose: a title, free-form instructions, and
+an `active`, `paused`, or `deprecated` lifecycle state. A **Watch** attaches a
+primary source to an Interest and describes its locator, inspection
+instructions, interval, lookback window, and lifecycle state. Several Watches
+can share one Interest.
+
+An **Item** is retained work or knowledge produced by a run. Its kind is
+`note`, `report`, `task`, or `outcome`; all kinds can contain Markdown content,
+source references, context, Todo state, reminders, acknowledgement state, and
+user notes. A **Proposal** is an agent-suggested creation, update, or
+deprecation of one Interest or Watch. Proposals are reviewed by a person and
+do not change configuration automatically.
 
 ## Build and run
 
@@ -18,13 +42,14 @@ installed executable has no Node.js dependency.
 npm --prefix web ci
 npm --prefix web run build
 go build -trimpath -o dist/aicp.exe ./cmd/aicp
+.\dist\aicp.exe init
 .\dist\aicp.exe serve
 ```
 
 Open <http://127.0.0.1:7331>. Data defaults to the operating system's user
 configuration directory under `control-plane`. Set `AICP_DATA_DIR`, or pass
-`serve --data-dir <directory>`, to use another location. Only `serve` opens the
-database; every other CLI command calls the running server.
+`serve --data-dir <directory>`, to use another location. `init` prepares the
+database and defaults; ordinary commands call the running server.
 
 ```powershell
 .\dist\aicp.exe doctor
@@ -32,12 +57,16 @@ database; every other CLI command calls the running server.
 .\dist\aicp.exe interest create --file interest.json --json
 .\dist\aicp.exe watch create --file watch.json --json
 .\dist\aicp.exe brief --json
+.\dist\aicp.exe run start
+.\dist\aicp.exe run submit <watch-id> --file findings.json
+.\dist\aicp.exe run finish --summary "Inspected selected Watches"
 ```
 
-Request files are ordinary JSON. Use `aicp <command> --help` for the accepted
-shape. Descriptive instructions and reports remain free-form Markdown; JSON
-fields cover only identity, revisions, scheduling, source references, and user
-actions needed for safe operation.
+Configuration and complex finding/item payload files are ordinary JSON. The
+normal run start and finish commands need no files. Use `aicp <command> --help`
+for the accepted shape. Descriptive instructions and reports remain free-form
+Markdown; JSON fields cover only identity, revisions, scheduling, source
+references, and user actions needed for safe operation.
 
 ## Agent connection
 
@@ -53,6 +82,34 @@ codex mcp add aicp -- C:\absolute\path\aicp.exe mcp --server http://127.0.0.1:73
 scheduler can invoke a configured Codex harness with overlap protection. See
 `examples/scheduling.md`. aicp records when Watches are due; it does not launch
 an agent itself.
+
+### How an agent run works
+
+aicp is the local control plane, not the source connector or scheduler. An
+external heartbeat starts the agent, and the agent uses its existing tools to
+inspect sources:
+
+1. Call `start_run`. aicp returns each active Interest once, bounded pages of
+   unarchived Attention summaries, due Watch snapshots, contexts, and the
+   captured change range.
+2. Consume all continuation cursors, then inspect only the selected Watches
+   with the agent's Slack, browser, GitHub, Drive, or other tools. aicp never
+   receives source credentials or fetches those systems.
+3. Call `submit_watch_findings` once per selected Watch. The result records
+   coverage, limitations, the next cursor, and zero or more Item upserts. If a
+   finding is relevant to an Interest but not a selected Watch, use
+   `upsert_item` without a Watch. Stable dedupe keys and expected content
+   versions let the agent update findings instead of creating duplicates.
+4. Call `finish_run` only after every selected Watch has a terminal result.
+   Successful coverage advances the Watch checkpoint and next due time; failed
+   or partial coverage remains eligible for a later run.
+5. Review the resulting Attention items. You can open sources, acknowledge
+   findings, set Todo or Done, add reminders, and accept or reject proposals.
+   The next run receives those local changes as context.
+
+The server does not promise that an inspection is running merely because a
+Watch exists. Until an external runner connects, the portal reports that no
+agent run has been received.
 
 ## Demo and verification
 
