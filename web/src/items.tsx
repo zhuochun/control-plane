@@ -790,7 +790,7 @@ export function Library() {
       {query.data?.length === 0 && (
         <section className="panel empty">
           <h2>No matching items</h2>
-          <p>Try another filter or wait for an agent to publish a finding.</p>
+          <p>Try another filter or wait for an agent to report a finding.</p>
         </section>
       )}
     </>
