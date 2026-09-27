@@ -31,6 +31,7 @@ func (f *Field[T]) UnmarshalJSON(data []byte) error {
 
 type Interest struct {
 	ID             string    `json:"id"`
+	Slug           string    `json:"slug"`
 	Title          string    `json:"title"`
 	InstructionsMD string    `json:"instructions_md"`
 	State          string    `json:"state"`
@@ -41,6 +42,7 @@ type Interest struct {
 
 type CreateInterest struct {
 	RequestID      string `json:"request_id"`
+	Slug           string `json:"slug,omitempty"`
 	Title          string `json:"title"`
 	InstructionsMD string `json:"instructions_md"`
 	State          string `json:"state,omitempty"`
@@ -49,6 +51,7 @@ type CreateInterest struct {
 type UpdateInterest struct {
 	RequestID        string        `json:"request_id"`
 	ExpectedRevision int64         `json:"expected_revision"`
+	Slug             Field[string] `json:"slug"`
 	Title            Field[string] `json:"title"`
 	InstructionsMD   Field[string] `json:"instructions_md"`
 	State            Field[string] `json:"state"`
@@ -75,12 +78,12 @@ func validState(state string) bool {
 	return state == "active" || state == "paused" || state == "deprecated"
 }
 
-const interestColumns = "id, title, instructions_md, state, revision, created_at, updated_at"
+const interestColumns = "id, slug, title, instructions_md, state, revision, created_at, updated_at"
 
 func scanInterest(row scanner) (Interest, error) {
 	var item Interest
 	var created, updated int64
-	err := row.Scan(&item.ID, &item.Title, &item.InstructionsMD, &item.State, &item.Revision, &created, &updated)
+	err := row.Scan(&item.ID, &item.Slug, &item.Title, &item.InstructionsMD, &item.State, &item.Revision, &created, &updated)
 	item.CreatedAt, item.UpdatedAt = time.UnixMilli(created).UTC(), time.UnixMilli(updated).UTC()
 	return item, missing(err)
 }
@@ -137,7 +140,20 @@ func (a *App) CreateInterest(ctx context.Context, input CreateInterest) (json.Ra
 		}
 		now := a.Now().UTC().UnixMilli()
 		id := uuid.NewString()
-		_, err := tx.ExecContext(ctx, `INSERT INTO interests(id,title,instructions_md,state,revision,created_at,updated_at) VALUES(?,?,?,?,1,?,?)`, id, input.Title, input.InstructionsMD, input.State, now, now)
+		if input.Slug == "" {
+			input.Slug = defaultSlug("interest", id)
+		}
+		if !validSlug(input.Slug) {
+			return nil, Invalid("slug must contain 2-80 lowercase letters, digits, or hyphens")
+		}
+		var occupied int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM interests WHERE slug=?`, input.Slug).Scan(&occupied); err != nil {
+			return nil, err
+		}
+		if occupied != 0 {
+			return nil, &Error{Status: 409, Code: "slug_conflict", Message: "Interest slug is already in use"}
+		}
+		_, err := tx.ExecContext(ctx, `INSERT INTO interests(id,slug,title,instructions_md,state,revision,created_at,updated_at) VALUES(?,?,?,?,?,1,?,?)`, id, input.Slug, input.Title, input.InstructionsMD, input.State, now, now)
 		if err != nil {
 			return nil, err
 		}
@@ -159,7 +175,9 @@ func (a *App) UpdateInterest(ctx context.Context, id string, input UpdateInteres
 		if input.ExpectedRevision != item.Revision {
 			return nil, revisionConflict(item.Revision)
 		}
-		previous := item
+		if input.Slug.Set {
+			item.Slug = input.Slug.Value
+		}
 		if input.Title.Set {
 			item.Title = input.Title.Value
 		}
@@ -172,15 +190,20 @@ func (a *App) UpdateInterest(ctx context.Context, id string, input UpdateInteres
 		if strings.TrimSpace(item.Title) == "" || !validState(item.State) {
 			return nil, Invalid("A title and valid lifecycle state are required")
 		}
-		now := a.Now().UTC().UnixMilli()
-		_, err = tx.ExecContext(ctx, `UPDATE interests SET title=?,instructions_md=?,state=?,revision=revision+1,updated_at=? WHERE id=?`, item.Title, item.InstructionsMD, item.State, now, id)
-		if err != nil {
+		if !validSlug(item.Slug) {
+			return nil, Invalid("slug must contain 2-80 lowercase letters, digits, or hyphens")
+		}
+		var occupied int
+		if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM interests WHERE slug=? AND id<>?`, item.Slug, id).Scan(&occupied); err != nil {
 			return nil, err
 		}
-		if previous.InstructionsMD != item.InstructionsMD || (previous.State != "active" && item.State == "active") {
-			if _, err = tx.ExecContext(ctx, `UPDATE watches SET next_due_at=? WHERE interest_id=? AND state='active'`, now, id); err != nil {
-				return nil, err
-			}
+		if occupied != 0 {
+			return nil, &Error{Status: 409, Code: "slug_conflict", Message: "Interest slug is already in use"}
+		}
+		now := a.Now().UTC().UnixMilli()
+		_, err = tx.ExecContext(ctx, `UPDATE interests SET slug=?,title=?,instructions_md=?,state=?,revision=revision+1,updated_at=? WHERE id=?`, item.Slug, item.Title, item.InstructionsMD, item.State, now, id)
+		if err != nil {
+			return nil, err
 		}
 		item, err = getInterest(ctx, tx, id)
 		if err != nil {

@@ -27,7 +27,7 @@ func TestConfigurationPreservesCursorAndFencesStaleEdits(t *testing.T) {
 	if err = json.Unmarshal(created, &interest); err != nil {
 		t.Fatal(err)
 	}
-	result, err := a.CreateWatch(ctx, CreateWatch{RequestID: "watch", InterestID: interest.ID, Source: WatchSource{Kind: "github", Locator: "org/repo"}})
+	result, err := a.CreateWatch(ctx, CreateWatch{RequestID: "watch", InterestIDs: []string{interest.ID}, MatchingPolicy: "explicit", Source: WatchSource{Kind: "github", Locator: "org/repo"}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -52,8 +52,8 @@ func TestConfigurationPreservesCursorAndFencesStaleEdits(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if !watch.NextDueAt.Equal(now) || string(watch.Cursor) != `{"position":42}` {
-		t.Fatalf("interest edit lost checkpoint or did not reschedule: %+v", watch)
+	if !watch.NextDueAt.Equal(time.Date(2026, 9, 15, 1, 0, 0, 0, time.UTC)) || string(watch.Cursor) != `{"position":42}` {
+		t.Fatalf("interest edit changed source checkpoint or schedule: %+v", watch)
 	}
 	update.RequestID = "stale"
 	if _, err = a.UpdateInterest(ctx, interest.ID, update); err == nil {

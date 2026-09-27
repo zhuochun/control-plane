@@ -1,6 +1,7 @@
 export type WatchHealth = {
   watch_id: string;
   next_due_at: string;
+  due_reason: string;
   last_status?: string;
   last_attempt_at?: string;
   last_success_at?: string;

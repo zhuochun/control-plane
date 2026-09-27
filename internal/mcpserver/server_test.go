@@ -51,7 +51,7 @@ func TestGetBriefOverMCP(t *testing.T) {
 	for _, tool := range tools.Tools {
 		names[tool.Name] = true
 	}
-	for _, name := range []string{"get_brief", "start_run", "submit_watch_findings", "upsert_item", "finish_run"} {
+	for _, name := range []string{"get_brief", "start_run", "submit_watch_findings", "upsert_item", "finish_run", "list_watchers", "get_watcher", "create_watcher", "update_watcher", "list_interests", "create_interest", "update_interest"} {
 		if !names[name] {
 			t.Fatalf("missing final MCP tool %q", name)
 		}
