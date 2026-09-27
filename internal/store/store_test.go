@@ -43,6 +43,9 @@ func TestWatcherInterestMigrationPreservesHistory(t *testing.T) {
 	if _, err = db.ExecContext(ctx, "UPDATE settings SET value='Custom guidance' WHERE key='agents_md'"); err != nil {
 		t.Fatal(err)
 	}
+	if _, err = db.ExecContext(ctx, "UPDATE settings SET value='Custom owner context' WHERE key='user_md'"); err != nil {
+		t.Fatal(err)
+	}
 	if err = db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -85,6 +88,20 @@ func TestWatcherInterestMigrationPreservesHistory(t *testing.T) {
 	}
 	if guidance != "Custom guidance" {
 		t.Fatalf("migration overwrote owner guidance: %q", guidance)
+	}
+	var ownerContext string
+	if err = store.DB.QueryRowContext(ctx, "SELECT value FROM settings WHERE key='user_md'").Scan(&ownerContext); err != nil {
+		t.Fatal(err)
+	}
+	if ownerContext != "Custom owner context" {
+		t.Fatalf("migration overwrote owner context: %q", ownerContext)
+	}
+	var defaultGuidance string
+	if err = store.DB.QueryRowContext(ctx, "SELECT value FROM settings WHERE key='default_agents_md'").Scan(&defaultGuidance); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(defaultGuidance, "Watchers define bounded source inputs") {
+		t.Fatalf("missing current reset guidance: %q", defaultGuidance)
 	}
 }
 

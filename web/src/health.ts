@@ -17,5 +17,6 @@ export type ServiceStatus = {
     due_count: number;
     item_counts: { all: number; attention: number; todo: number };
     watches: WatchHealth[];
+    setup: { user_context_set: boolean; has_interest: boolean; has_watcher: boolean; done: boolean };
   };
 };

@@ -51,6 +51,19 @@ func New(a *app.App, assets http.Handler, version string) http.Handler {
 		}
 		write(w, 200, result)
 	})
+	mux.HandleFunc("PUT /api/v1/settings/user-context", func(w http.ResponseWriter, r *http.Request) {
+		var input app.SetUserContext
+		if err := decode(w, r, &input); err != nil {
+			fail(w, err)
+			return
+		}
+		result, err := a.SetUserContext(r.Context(), input)
+		if err != nil {
+			fail(w, err)
+			return
+		}
+		write(w, 200, result)
+	})
 	mux.HandleFunc("/api/", func(w http.ResponseWriter, r *http.Request) {
 		fail(w, &app.Error{Status: 404, Code: "not_found", Message: "Unknown API endpoint"})
 	})

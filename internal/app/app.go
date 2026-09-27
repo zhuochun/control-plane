@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 	_ "time/tzdata"
 
@@ -99,9 +100,11 @@ func (a *App) event(ctx context.Context, tx *sql.Tx, actor, entityType, entityID
 }
 
 type Settings struct {
-	Timezone string `json:"timezone"`
-	AgentsMD string `json:"agents_md"`
-	UserMD   string `json:"user_md"`
+	Timezone        string `json:"timezone"`
+	AgentsMD        string `json:"agents_md"`
+	UserMD          string `json:"user_md"`
+	DefaultAgentsMD string `json:"default_agents_md"`
+	DefaultUserMD   string `json:"default_user_md"`
 }
 type SetSettings struct {
 	RequestID string  `json:"request_id"`
@@ -109,12 +112,18 @@ type SetSettings struct {
 	AgentsMD  *string `json:"agents_md,omitempty"`
 	UserMD    *string `json:"user_md,omitempty"`
 }
+type SetUserContext struct {
+	RequestID string  `json:"request_id,omitempty"`
+	UserMD    *string `json:"user_md"`
+}
 
 type settingsRow struct {
-	timezoneValue string
-	timezoneMode  string
-	agentsMD      string
-	userMD        string
+	timezoneValue   string
+	timezoneMode    string
+	agentsMD        string
+	userMD          string
+	defaultAgentsMD string
+	defaultUserMD   string
 }
 
 func readSettings(ctx context.Context, db querier) (settingsRow, error) {
@@ -123,7 +132,9 @@ func readSettings(ctx context.Context, db querier) (settingsRow, error) {
   (SELECT value FROM settings WHERE key='timezone'),
   COALESCE((SELECT value FROM settings WHERE key='timezone_mode'), 'custom'),
   COALESCE((SELECT value FROM settings WHERE key='agents_md'), ''),
-  COALESCE((SELECT value FROM settings WHERE key='user_md'), '')`).Scan(&row.timezoneValue, &row.timezoneMode, &row.agentsMD, &row.userMD)
+  COALESCE((SELECT value FROM settings WHERE key='user_md'), ''),
+  (SELECT value FROM settings WHERE key='default_agents_md'),
+  (SELECT value FROM settings WHERE key='default_user_md')`).Scan(&row.timezoneValue, &row.timezoneMode, &row.agentsMD, &row.userMD, &row.defaultAgentsMD, &row.defaultUserMD)
 	return row, err
 }
 
@@ -132,7 +143,7 @@ func (row settingsRow) public() Settings {
 	if row.timezoneMode == "auto" {
 		timezone = "browser"
 	}
-	return Settings{Timezone: timezone, AgentsMD: row.agentsMD, UserMD: row.userMD}
+	return Settings{Timezone: timezone, AgentsMD: row.agentsMD, UserMD: row.userMD, DefaultAgentsMD: row.defaultAgentsMD, DefaultUserMD: row.defaultUserMD}
 }
 
 func (a *App) Settings(ctx context.Context) (Settings, error) {
@@ -183,8 +194,34 @@ func (a *App) SetSettings(ctx context.Context, input SetSettings) (json.RawMessa
 		if _, err = tx.ExecContext(ctx, "UPDATE settings SET value = ? WHERE key = 'user_md'", userMD); err != nil {
 			return nil, err
 		}
-		settings := Settings{Timezone: input.Timezone, AgentsMD: agentsMD, UserMD: userMD}
+		settings := Settings{Timezone: input.Timezone, AgentsMD: agentsMD, UserMD: userMD, DefaultAgentsMD: current.defaultAgentsMD, DefaultUserMD: current.defaultUserMD}
 		if err := a.event(ctx, tx, "user", "settings", "timezone", "settings.updated", settings); err != nil {
+			return nil, err
+		}
+		return settings, nil
+	})
+}
+
+// SetUserContext updates only owner context, so an agent does not need to
+// resend the timezone or editable agent guidance while saving an approved draft.
+func (a *App) SetUserContext(ctx context.Context, input SetUserContext) (json.RawMessage, error) {
+	return a.mutate(ctx, input.RequestID, "PUT /settings/user-context", input, func(tx *sql.Tx) (any, error) {
+		if input.UserMD == nil {
+			return nil, Invalid("user_md is required")
+		}
+		if len([]byte(*input.UserMD)) > 64<<10 {
+			return nil, Invalid("USER.md must be 64 KiB or smaller")
+		}
+		current, err := readSettings(ctx, tx)
+		if err != nil {
+			return nil, err
+		}
+		if _, err = tx.ExecContext(ctx, "UPDATE settings SET value=? WHERE key='user_md'", *input.UserMD); err != nil {
+			return nil, err
+		}
+		settings := current.public()
+		settings.UserMD = *input.UserMD
+		if err = a.event(ctx, tx, "user", "settings", "user_md", "user_context.updated", map[string]any{"set": strings.TrimSpace(*input.UserMD) != ""}); err != nil {
 			return nil, err
 		}
 		return settings, nil

@@ -61,6 +61,39 @@ func TestRejectsNonLoopbackHost(t *testing.T) {
 	}
 }
 
+func TestOwnerContextHTTPDoesNotClaimRun(t *testing.T) {
+	s, err := store.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	handler := New(app.New(s), http.NotFoundHandler(), "test")
+	call := func(body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest("PUT", "http://127.0.0.1:7331/api/v1/settings/user-context", strings.NewReader(body))
+		request.Header.Set("Content-Type", "application/json")
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	if response := call(`{}`); response.Code != 422 {
+		t.Fatalf("missing owner context accepted: %d %s", response.Code, response.Body.String())
+	}
+	if response := call(`{"user_md":"# Owner\\n\\nReview releases."}`); response.Code != 200 {
+		t.Fatalf("owner context save: %d %s", response.Code, response.Body.String())
+	}
+	settings, err := app.New(s).Settings(context.Background())
+	if err != nil || !strings.Contains(settings.UserMD, "Review releases") {
+		t.Fatalf("owner context not saved: %+v, %v", settings, err)
+	}
+	var count int
+	if err = s.DB.QueryRow("SELECT count(*) FROM runs").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("context edit started %d Runs", count)
+	}
+}
+
 func TestWatcherConfigurationUsesNewShapeWithoutStartingRun(t *testing.T) {
 	s, err := store.Open(context.Background(), t.TempDir())
 	if err != nil {

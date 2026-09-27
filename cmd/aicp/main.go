@@ -16,6 +16,7 @@ import (
 	"strings"
 	"syscall"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/modelcontextprotocol/go-sdk/mcp"
@@ -68,7 +69,16 @@ func command() *cobra.Command {
 	dataDir := env("AICP_DATA_DIR", filepath.Join(directory, "control-plane"))
 	server := env("AICP_SERVER_URL", "http://127.0.0.1:7331")
 	var jsonOutput bool
-	root := &cobra.Command{Use: "aicp", Short: "A little space for what matters", SilenceUsage: true, SilenceErrors: true}
+	root := &cobra.Command{Use: "aicp", Short: "A local control plane for agent work", Long: `aicp keeps the durable plan and results of agent work.
+
+An Interest says why a finding matters. A Watcher names a bounded source to
+inspect. A Run records one actual inspection. An Item retains a matter to
+review or act on. Your external agent inspects sources; aicp stores the plan,
+context, coverage, and findings. A scheduler is optional and external.
+
+Start with init, serve, and doctor. Set owner context, an Interest, and an
+applicable Watcher; then read brief without claiming a Run. See the packaged
+GETTING_STARTED.md for the full agent-assisted path.`, SilenceUsage: true, SilenceErrors: true}
 	root.PersistentFlags().StringVar(&dataDir, "data-dir", dataDir, "Local data directory (init and serve)")
 	root.PersistentFlags().StringVar(&server, "server", server, "Local server URL")
 	root.PersistentFlags().BoolVar(&jsonOutput, "json", false, "Print machine-readable JSON")
@@ -166,6 +176,24 @@ func command() *cobra.Command {
 	config.AddCommand(&cobra.Command{Use: "set <timezone>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return printResult(cmd, "PATCH", "/settings", app.SetSettings{RequestID: uuid.NewString(), Timezone: args[0]})
 	}})
+	userContext := &cobra.Command{Use: "user-context", Short: "Read or save owner context"}
+	userContext.AddCommand(&cobra.Command{Use: "get", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error { return printResult(cmd, "GET", "/settings", nil) }})
+	var userContextFile string
+	setUserContext := &cobra.Command{Use: "set", Args: cobra.NoArgs, Short: "Save an approved USER.md draft from a UTF-8 file", RunE: func(cmd *cobra.Command, args []string) error {
+		body, err := os.ReadFile(userContextFile)
+		if err != nil {
+			return err
+		}
+		if !utf8.Valid(body) {
+			return fmt.Errorf("USER.md file must be UTF-8")
+		}
+		value := string(body)
+		return printResult(cmd, "PUT", "/settings/user-context", app.SetUserContext{RequestID: uuid.NewString(), UserMD: &value})
+	}}
+	setUserContext.Flags().StringVar(&userContextFile, "file", "", "Approved USER.md file")
+	_ = setUserContext.MarkFlagRequired("file")
+	userContext.AddCommand(setUserContext)
+	config.AddCommand(userContext)
 	var planFile, previewToken, planRequestID string
 	var dryRun bool
 	planCommand := &cobra.Command{Use: "plan", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {

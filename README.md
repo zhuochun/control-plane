@@ -9,6 +9,10 @@ The application is one Go executable with an embedded React portal and a local
 SQLite database. It binds only to `127.0.0.1:7331`. Source credentials and agent
 scheduling stay outside aicp.
 
+For an installed binary, start with [GETTING_STARTED.md](GETTING_STARTED.md).
+It walks an agent and person through setup, the first inspection, and a return
+visit. `aicp --help` gives the same mental model and command entry points.
+
 ## Domain model
 
 The durable configuration and work relationships are:
@@ -35,7 +39,7 @@ link. Agent-published source findings cite a Watcher, source reference, and
 one or more Interest reasons. A **Proposal** is an agent-suggested configuration
 change for review; it does not change configuration automatically.
 
-## Build and run
+## Build from source
 
 Development requires Node.js 24 and the Go version pinned in `go.mod`. The
 installed executable has no Node.js dependency.

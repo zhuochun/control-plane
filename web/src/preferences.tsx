@@ -4,8 +4,6 @@ import { Alert, Button, TextField } from "@mui/material";
 import { api } from "./api";
 import {
   browserTimezone,
-  defaultAgentContext,
-  defaultUserContext,
   effectiveTimezone,
   Settings,
   timezoneLabel,
@@ -17,8 +15,8 @@ export function Preferences() {
   const settings = useSettings();
   const [loaded, setLoaded] = useState(false);
   const [timezone, setTimezone] = useState("browser");
-  const [agentsMD, setAgentsMD] = useState(defaultAgentContext);
-  const [userMD, setUserMD] = useState(defaultUserContext);
+  const [agentsMD, setAgentsMD] = useState("");
+  const [userMD, setUserMD] = useState("");
 
   useEffect(() => {
     if (!settings.data || loaded) return;
@@ -141,7 +139,7 @@ export function Preferences() {
               type="button"
               variant="text"
               onClick={() => {
-                setAgentsMD(defaultAgentContext);
+                setAgentsMD(settings.data!.default_agents_md);
                 save.reset();
               }}
               disabled={!settings.data}
@@ -181,7 +179,7 @@ export function Preferences() {
               type="button"
               variant="text"
               onClick={() => {
-                setUserMD(defaultUserContext);
+                setUserMD(settings.data!.default_user_md);
                 save.reset();
               }}
               disabled={!settings.data}
