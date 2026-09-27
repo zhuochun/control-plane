@@ -1,4 +1,4 @@
-import { useRef, useState } from "react";
+import { type ReactNode, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import {
   Alert,
@@ -51,6 +51,22 @@ type PlanPreview = {
   due_after:number;
   changes:{target_type:string;operation:string;target:string;affected_items:number;affected_watchers?:string[];cursor_reset:boolean;consequence?:string;overlapping_watchers?:string[]}[];
 };
+
+function RelatedItems({ kind, id, limit, children }: { kind: "interest" | "watch"; id: string; limit: number; children?: ReactNode }) {
+  const [open, setOpen] = useState(false);
+  const related = useQuery({
+    queryKey: ["items", "related", kind, id],
+    queryFn: () => api<{ items: { id: string; title: string }[] }>(`/items?${kind}_id=${encodeURIComponent(id)}&limit=${limit}`),
+    enabled: open,
+  });
+  return <details onToggle={(event) => setOpen(event.currentTarget.open)}>
+    <summary>{kind === "watch" ? "Coverage and Items" : "Related Items"}</summary>
+    {children}
+    {related.isPending && <small>Loading Items…</small>}
+    {related.isError && <small>Could not load related Items.</small>}
+    {related.data && <div>{related.data.items.length === 0 ? <small>No related Items yet.</small> : related.data.items.map((item) => <NavLink key={item.id} to={`/items/${item.id}`}>{item.title} </NavLink>)}</div>}
+  </details>;
+}
 
 function ConfigurationPlanDialog({close}:{close:()=>void}){
   const cache=useQueryClient();
@@ -291,7 +307,6 @@ export function Interests() {
     queryKey: ["watches"],
     queryFn: () => collection<Watch>("/watches"),
   });
-  const items = useQuery({queryKey:["items","monitoring"],queryFn:()=>collection<{id:string;title:string;watch_id?:string;interests:{id:string;reason:string}[]}>("/items?view=all")});
   const [editor, setEditor] = useState<Editor | null>(null);
   const [planOpen,setPlanOpen]=useState(false);
   return (
@@ -354,7 +369,7 @@ export function Interests() {
             {!watches.isPending && !watches.isError && !watches.data?.some((watch)=>watch.state==="active" && (!watch.valid_until || new Date(watch.valid_until)>new Date()) && (watch.matching_policy==="broad"||watch.interest_ids.includes(interest.id))) && <small>Coverage gap: no active Watcher currently assesses this Interest.</small>}
             <small>Changes to this Interest apply from the next Run; earlier source input is not reassessed.</small>
             <div>{watches.data?.filter((watch)=>watch.matching_policy==="broad"||watch.interest_ids.includes(interest.id)).map((watch)=><NavLink key={watch.id} to={`#watcher-${watch.slug}`}>{watch.slug} </NavLink>)}</div>
-            <div>{items.data?.filter((item)=>item.interests?.some((reason)=>reason.id===interest.id)).slice(0,10).map((item)=><NavLink key={item.id} to={`/items/${item.id}`}>{item.title} </NavLink>)}</div>
+            <RelatedItems kind="interest" id={interest.id} limit={10} />
           </section>
         ))}
       </div>
@@ -382,10 +397,9 @@ export function Interests() {
                   {health?.next_due_at && ` · ${new Date(health.next_due_at)<=new Date()?"Due now":`next due ${formatDateTime(health.next_due_at,settings.data?.timezone)}`}`}
                 </small>
                 {health?.last_error && <small>Latest error: {health.last_error}</small>}
-                <details><summary>Coverage and Items</summary>
+                <RelatedItems kind="watch" id={watch.id} limit={20}>
                   <small>Cursor: {watch.cursor ? JSON.stringify(watch.cursor) : "none"} · next due {formatDateTime(watch.next_due_at,settings.data?.timezone)}</small>
-                  <div>{items.data?.filter((item)=>item.watch_id===watch.id).slice(0,20).map((item)=><NavLink key={item.id} to={`/items/${item.id}`}>{item.title} </NavLink>)}</div>
-                </details>
+                </RelatedItems>
               </div>
               <Button size="small" onClick={()=>setEditor({kind:"watch",item:watch})}>Edit Watcher</Button>
             </div>

@@ -45,7 +45,7 @@ function NewItemDialog({close}:{close:()=>void}){
     request_id:attempt.current.requestId,dedupe_key:`user:${identity.current}`,kind,title,summary,
     sources:sourceDate?[{id:"user-date",label:"Source date",source_date:sourceDate}]:[],
     report:{schema_version:1,body_md:body},
-  },"POST")},onSuccess:async()=>{await cache.invalidateQueries({queryKey:["items"]});close()}});
+  },"POST")},onSuccess:async()=>{await Promise.all([cache.invalidateQueries({queryKey:["items"]}),cache.invalidateQueries({queryKey:["status"]})]);close()}});
   return <Dialog open onClose={close} fullWidth maxWidth="sm"><form onSubmit={(event)=>{event.preventDefault();create.mutate()}}>
     <DialogTitle>New Item</DialogTitle><DialogContent><div className="editor-fields">
       <p>Capture your own task or note. A source link is optional.</p>
@@ -156,14 +156,12 @@ export function ItemWorkspace({ mode }: { mode: "attention" | "library" | "todo"
   const [interest, setInterest] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
   const [newItem,setNewItem]=useState(false);
-  const all = useQuery({ queryKey: ["items", "workspace", "all"], queryFn: () => collection<Item>("/items?view=all") });
-  const attention = useQuery({ queryKey: ["items", "workspace", "attention"], queryFn: () => collection<Item>("/items?view=attention") });
+  const view = mode === "library" ? "all" : mode;
+  const items = useQuery({ queryKey: ["items", "workspace", view], queryFn: () => collection<Item>(`/items?view=${view}`) });
   const interests = useQuery({ queryKey: ["interests"], queryFn: () => collection<Interest>("/interests") });
-  const proposals = useQuery({ queryKey: ["proposals", "pending"], queryFn: () => collection<Proposal>("/proposals?state=pending") });
-  const attentionIds = new Set((attention.data ?? []).map((item) => item.id));
+  const proposals = useQuery({ queryKey: ["proposals", "pending"], queryFn: () => collection<Proposal>("/proposals?state=pending"), enabled: mode === "attention" });
   const interestNames = new Map((interests.data ?? []).map((entry) => [entry.id, entry.title]));
-  const candidates = mode === "attention" ? (all.data ?? []).filter((item) => attentionIds.has(item.id)) : mode === "todo" ? (all.data ?? []).filter((item) => item.todo_state === "todo") : all.data ?? [];
-  const filtered = candidates.filter((item) =>
+  const filtered = (items.data ?? []).filter((item) =>
     (!kind || item.kind === kind) && (!interest || item.interests?.some((reason)=>reason.id===interest)) &&
     (!search.trim() || `${item.title} ${item.summary} ${item.interests?.map((reason)=>interestNames.get(reason.id) ?? "").join(" ") ?? ""}`.toLowerCase().includes(search.trim().toLowerCase()))
   );
@@ -182,8 +180,8 @@ export function ItemWorkspace({ mode }: { mode: "attention" | "library" | "todo"
         <select aria-label="Filter by Interest" value={interest} onChange={(event) => setInterest(event.target.value)}><option value="">All interests</option>{interests.data?.map((entry) => <option key={entry.id} value={entry.id}>{entry.title}</option>)}</select>
         <select aria-label="Filter by kind" value={kind} onChange={(event) => setKind(event.target.value)}><option value="">All kinds</option>{["report", "outcome", "note", "task"].map((entry) => <option key={entry} value={entry}>{entry[0].toUpperCase() + entry.slice(1)}</option>)}</select>
       </div>
-      {(all.isError || attention.isError) && <Alert severity="error">Could not load items. Check the local server.</Alert>}
-      {(all.isPending || attention.isPending) && <p role="status">Loading items…</p>}
+      {items.isError && <Alert severity="error">Could not load items. Check the local server.</Alert>}
+      {items.isPending && <p role="status">Loading items…</p>}
       <div className="ledger-head"><span>Item</span><span>Kind</span><span>Interest</span><span>Value / target</span><span>Trend</span><span>Updated</span><span>State</span></div>
       {groups.map(([label, items]) => items.length > 0 && <section className="ledger-group" key={label} aria-label={`${label} items`}>
         <h2>{label} <span>{items.length}</span></h2>
@@ -200,8 +198,8 @@ export function ItemWorkspace({ mode }: { mode: "attention" | "library" | "todo"
           </button>;
         })}
       </section>)}
-      {!all.isPending && filtered.length === 0 && <div className="ledger-empty-state">{mode === "attention" ? "Nothing needs attention right now." : "No matching items."}</div>}
-      {mode === "attention" && (proposals.data?.length ?? 0) > 0 && <section className="ledger-proposals"><h2>Proposals to review <span>{proposals.data?.length}</span></h2>{proposals.data?.map((proposal) => <ProposalCard key={proposal.id} proposal={proposal} />)}</section>}
+      {!items.isPending && filtered.length === 0 && <div className="ledger-empty-state">{mode === "attention" ? "Nothing needs attention right now." : "No matching items."}</div>}
+      {mode === "attention" && (proposals.data?.length ?? 0) > 0 && <section className="ledger-proposals"><h2>Proposals to review <span>{proposals.data?.length}</span></h2>{proposals.data?.map((proposal) => <ProposalCard key={proposal.id} proposal={proposal} candidates={proposals.data} />)}</section>}
     </div>
     {activeId && <Inspector key={activeId} itemId={activeId} close={() => setSelected("")} />}
     {newItem&&<NewItemDialog close={()=>setNewItem(false)}/>}

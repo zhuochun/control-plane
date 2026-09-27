@@ -207,6 +207,14 @@ func TestAgentItemWithoutWatcherDoesNotClaimAttention(t *testing.T) {
 	if len(attention) != 1 || attention[0].ID != user.ID {
 		t.Fatalf("user task missing Attention: %+v", attention)
 	}
+	health, err := a.OperationalHealth(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	counts := health["item_counts"].(ItemCounts)
+	if counts.All != 2 || counts.Attention != len(attention) || counts.Todo != 2 {
+		t.Fatalf("navigation counts disagree with Item views: %+v", counts)
+	}
 }
 
 func TestOneMatterAddsEvidenceAndInterestReasonWithoutLosingState(t *testing.T) {
