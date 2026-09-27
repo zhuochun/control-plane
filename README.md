@@ -181,5 +181,7 @@ Git.
 
 The current vocabulary is in [`docs/glossary.md`](docs/glossary.md), with the
 behavioral contract in the [Watcher–Interest model specification](docs/specs/20260924-watcher-interest-model-spec.md).
+For implementation ownership and focused verification commands, see the
+[architecture and verification map](docs/architecture.md).
 The deterministic fixture demo verifies the current local application path; it
 does not claim live Slack, Drive, or other connector access.
