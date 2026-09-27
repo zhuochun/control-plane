@@ -1,8 +1,39 @@
 import { expect, test } from "@playwright/test";
 
+test("workspace loads only its view and Monitoring defers related Items", async ({ page, request }) => {
+  const slug = `load-${crypto.randomUUID().slice(0, 8)}`;
+  const created = await request.post("/api/v1/interests", { data: { slug, title: "Load test" } });
+  expect(created.ok()).toBeTruthy();
+  const interest = await created.json();
+  const itemRequests: URL[] = [];
+  page.on("request", (entry) => {
+    const url = new URL(entry.url());
+    if (url.pathname === "/api/v1/items") itemRequests.push(url);
+  });
+  await page.goto("/");
+  await expect(page.getByRole("heading", { name: "Attention" })).toBeVisible();
+  await expect.poll(() => itemRequests.length).toBeGreaterThan(0);
+  expect(itemRequests.every((url) => url.searchParams.get("view") === "attention")).toBeTruthy();
+
+  itemRequests.length = 0;
+  await page.goto("/interests");
+  await expect(page.locator(`#interest-${slug}`)).toBeVisible();
+  expect(itemRequests).toHaveLength(0);
+  const relatedRequest = page.waitForRequest((entry) => {
+    const url = new URL(entry.url());
+    return url.pathname === "/api/v1/items" && url.searchParams.get("interest_id") === interest.id;
+  });
+  await page.locator(`#interest-${slug} summary`).click();
+  const loaded = new URL((await relatedRequest).url());
+  expect(loaded.searchParams.get("limit")).toBe("10");
+});
+
 test("user can capture a date-only Item without a link",async({page})=>{
   const marker=crypto.randomUUID().slice(0,8);
   await page.goto("/library");
+  const libraryCount = page.locator('nav a[href="/library"] .navigation-count');
+  await expect(libraryCount).not.toBeEmpty();
+  const before = Number(await libraryCount.textContent());
   await page.getByRole("button",{name:"New Item"}).click();
   const dialog=page.getByRole("dialog");
   await dialog.getByRole("textbox",{name:"Title"}).fill(`User idea ${marker}`);
@@ -10,6 +41,7 @@ test("user can capture a date-only Item without a link",async({page})=>{
   await dialog.getByLabel("Source date (optional)").fill("2026-09-27");
   await dialog.getByRole("button",{name:"Create"}).click();
   await expect(dialog).toHaveCount(0);
+  await expect(libraryCount).toHaveText(String(before + 1));
   await page.getByRole("button",{name:new RegExp(`User idea ${marker}`)}).click();
   await page.getByRole("link",{name:/Full detail/}).click();
   await expect(page.getByText("2026-09-27",{exact:true})).toBeVisible();

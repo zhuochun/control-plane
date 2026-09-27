@@ -856,6 +856,12 @@ type LastRunHealth struct {
 	Summary   string     `json:"summary,omitempty"`
 }
 
+type ItemCounts struct {
+	All       int `json:"all"`
+	Attention int `json:"attention"`
+	Todo      int `json:"todo"`
+}
+
 func (a *App) OperationalHealth(ctx context.Context) (map[string]any, error) {
 	var lastRun any
 	var activeRun any
@@ -939,5 +945,15 @@ func (a *App) OperationalHealth(ctx context.Context) (map[string]any, error) {
 	if err = rows.Err(); err != nil {
 		return nil, err
 	}
-	return map[string]any{"last_run": lastRun, "active_run": activeRun, "due_count": dueCount, "watches": watches}, nil
+	if err = rows.Close(); err != nil {
+		return nil, err
+	}
+	var counts ItemCounts
+	query := `SELECT count(*),
+count(*) FILTER (WHERE ` + attentionPredicate + `),
+count(*) FILTER (WHERE todo_state='todo') FROM items`
+	if err = a.Store.DB.QueryRowContext(ctx, query, now.UnixMilli()).Scan(&counts.All, &counts.Attention, &counts.Todo); err != nil {
+		return nil, err
+	}
+	return map[string]any{"last_run": lastRun, "active_run": activeRun, "due_count": dueCount, "watches": watches, "item_counts": counts}, nil
 }

@@ -197,16 +197,6 @@ function Portal() {
     queryKey: ["status"],
     queryFn: () => api<ServiceStatus>("/status"),
   });
-  const navigationCounts = useQuery({
-    queryKey: ["items", "navigation"],
-    queryFn: async () => {
-      const [all, attention] = await Promise.all([
-        collection<{ todo_state: string }>("/items?view=all"),
-        collection<unknown>("/items?view=attention"),
-      ]);
-      return { all: all.length, attention: attention.length, todo: all.filter((item) => item.todo_state === "todo").length };
-    },
-  });
   const navigation = [
     ["/", "Attention", "◉"],
     ["/todos", "Todos", "✓"],
@@ -229,9 +219,9 @@ function Portal() {
               <NavLink end={path === "/"} key={path} to={path}>
                 <span aria-hidden="true">{icon}</span>
                 {label}
-                {path === "/" && <span className="navigation-count">{navigationCounts.data?.attention ?? ""}</span>}
-                {path === "/todos" && <span className="navigation-count">{navigationCounts.data?.todo ?? ""}</span>}
-                {path === "/library" && <span className="navigation-count">{navigationCounts.data?.all ?? ""}</span>}
+                {path === "/" && <span className="navigation-count">{status.data?.health.item_counts.attention ?? ""}</span>}
+                {path === "/todos" && <span className="navigation-count">{status.data?.health.item_counts.todo ?? ""}</span>}
+                {path === "/library" && <span className="navigation-count">{status.data?.health.item_counts.all ?? ""}</span>}
               </NavLink>
             ))}
           </nav>

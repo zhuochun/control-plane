@@ -498,6 +498,8 @@ func (a *App) putItemTx(ctx context.Context, tx *sql.Tx, id string, input PutIte
 
 type ItemFilters struct{ View, Kind, InterestID, WatchID, Query, DedupeKey string }
 
+const attentionPredicate = `(origin<>'agent' OR watch_id IS NOT NULL) AND (todo_state='todo' OR acknowledged_content_version<content_version OR (remind_at IS NOT NULL AND remind_at<=?))`
+
 func (a *App) Items(ctx context.Context, filter ItemFilters) ([]Item, error) {
 	query := "SELECT " + itemColumns + " FROM items WHERE 1=1"
 	args := []any{}
@@ -539,7 +541,7 @@ func (a *App) Items(ctx context.Context, filter ItemFilters) ([]Item, error) {
 	}
 	switch filter.View {
 	case "attention":
-		query += " AND (origin<>'agent' OR watch_id IS NOT NULL) AND (todo_state='todo' OR acknowledged_content_version<content_version OR (remind_at IS NOT NULL AND remind_at<=?))"
+		query += " AND " + attentionPredicate
 		args = append(args, a.Now().UTC().UnixMilli())
 	case "todo":
 		query += " AND todo_state='todo'"
