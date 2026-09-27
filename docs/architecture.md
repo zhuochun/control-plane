@@ -5,6 +5,8 @@ This is a guide to the implemented repository. For domain meaning, read the
 [Watcher–Interest specification](specs/20260924-watcher-interest-model-spec.md).
 The older MVP specifications describe earlier behavior where they conflict with
 that specification. Check the code and migration when changing a contract.
+The [agent-led onboarding journey](specs/20260927-agent-led-onboarding-journey-spec.md)
+describes first and returning use, including the derived setup indication.
 
 ## Runtime path
 

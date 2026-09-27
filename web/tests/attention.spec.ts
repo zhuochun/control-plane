@@ -1,5 +1,24 @@
 import { expect, test } from "@playwright/test";
 
+test("Attention distinguishes incomplete setup from an uninspected plane", async ({ page }) => {
+  let setupDone = false;
+  await page.route("**/api/v1/status", async (route) => {
+    const response = await route.fetch();
+    const status = await response.json();
+    status.health.setup = { user_context_set: setupDone, has_interest: setupDone, has_watcher: setupDone, done: setupDone };
+    status.health.last_run = null;
+    status.health.watches = [];
+    await route.fulfill({ response, json: status });
+  });
+  await page.goto("/");
+  await expect(page.getByText("Setup needs configuration.")).toBeVisible();
+  await expect(page.getByRole("link", { name: "Set up a Watcher" })).toBeVisible();
+  await expect(page.getByText("Nothing needs attention right now.")).toHaveCount(0);
+  setupDone = true;
+  await page.reload();
+  await expect(page.getByText("Setup done; inspection not yet verified.", { exact: false })).toBeVisible();
+});
+
 test("workspace loads only its view and Monitoring defers related Items", async ({ page, request }) => {
   const slug = `load-${crypto.randomUUID().slice(0, 8)}`;
   const created = await request.post("/api/v1/interests", { data: { slug, title: "Load test" } });
@@ -208,4 +227,17 @@ test("preferences keep browser defaults and expose agent context", async ({
     "# Agent rules\n\nRead the brief first.",
   );
   expect(body.contexts["USER.md"]).toBe("# Owner\n\nPrefer concise evidence.");
+
+  await page.getByRole("button", { name: "Reset to default" }).first().click();
+  await expect(page.getByLabel("Agent instructions")).toHaveValue(settingsBody.default_agents_md);
+  await page.getByRole("button", { name: "Reset to default" }).last().click();
+  await expect(page.getByLabel("Owner context")).toHaveValue(settingsBody.default_user_md);
+  const beforeSave = await (await request.get("/api/v1/settings")).json();
+  expect(beforeSave.agents_md).toBe(settingsBody.agents_md);
+  expect(beforeSave.user_md).toBe(settingsBody.user_md);
+  await page.getByRole("button", { name: "Save preferences" }).click();
+  await expect(page.getByText("Preferences saved.")).toBeVisible();
+  const afterSave = await (await request.get("/api/v1/settings")).json();
+  expect(afterSave.agents_md).toBe(settingsBody.default_agents_md);
+  expect(afterSave.user_md).toBe(settingsBody.default_user_md);
 });

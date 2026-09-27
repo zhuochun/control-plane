@@ -2,6 +2,12 @@ package main
 
 import (
 	"errors"
+	"io"
+	"net/http"
+	"net/http/httptest"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/zhuochun/control-plane/internal/client"
@@ -26,5 +32,30 @@ func TestExitCodeContract(t *testing.T) {
 				t.Fatalf("exitCode() = %d, want %d", got, test.want)
 			}
 		})
+	}
+}
+
+func TestUserContextCommandSendsApprovedFile(t *testing.T) {
+	file := filepath.Join(t.TempDir(), "USER.md")
+	if err := os.WriteFile(file, []byte("# Owner\n\nReview releases."), 0600); err != nil {
+		t.Fatal(err)
+	}
+	var path, method, body string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		path, method = r.URL.Path, r.Method
+		data, _ := io.ReadAll(r.Body)
+		body = string(data)
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"user_md":"# Owner"}`))
+	}))
+	defer server.Close()
+	cmd := command()
+	cmd.SetArgs([]string{"--server", server.URL, "config", "user-context", "set", "--file", file})
+	cmd.SetOut(io.Discard)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if path != "/api/v1/settings/user-context" || method != http.MethodPut || !strings.Contains(body, `"user_md":"# Owner\n\nReview releases."`) {
+		t.Fatalf("unexpected context request: %s %s %s", method, path, body)
 	}
 }

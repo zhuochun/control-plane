@@ -21,6 +21,12 @@ $smokeDirectory = Join-Path ([IO.Path]::GetTempPath()) ('aicp-package-smoke-' + 
 New-Item -ItemType Directory -Path $smokeDirectory | Out-Null
 Expand-Archive -LiteralPath $archivePath -DestinationPath $smokeDirectory
 $executable = (Resolve-Path -LiteralPath (Join-Path $smokeDirectory 'aicp.exe')).Path
+$guide = Join-Path $smokeDirectory 'GETTING_STARTED.md'
+if (-not (Test-Path -LiteralPath $guide -PathType Leaf)) { throw 'packaged getting-started guide is missing' }
+$helpText = (& $executable --help | Out-String)
+if ($LASTEXITCODE -ne 0 -or $helpText -notmatch 'An Interest says why' -or $helpText -notmatch 'GETTING_STARTED.md') {
+    throw 'packaged help does not explain the product model and guide'
+}
 & $executable version
 if ($LASTEXITCODE -ne 0) { throw 'packaged executable did not start' }
 

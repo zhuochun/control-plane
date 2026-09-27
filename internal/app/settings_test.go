@@ -27,6 +27,9 @@ func TestSettingsDefaultToBrowserAndTravelWithBrief(t *testing.T) {
 	if settings.AgentsMD == "" || settings.UserMD == "" {
 		t.Fatalf("default contexts are empty: %+v", settings)
 	}
+	if settings.DefaultAgentsMD != settings.AgentsMD || settings.DefaultUserMD != settings.UserMD {
+		t.Fatalf("fresh contexts differ from reset defaults: %+v", settings)
+	}
 
 	brief, err := a.Brief(ctx)
 	if err != nil {
@@ -52,7 +55,8 @@ func TestSettingsDefaultToBrowserAndTravelWithBrief(t *testing.T) {
 	if err = json.Unmarshal(raw, &saved); err != nil {
 		t.Fatal(err)
 	}
-	if saved.Timezone != "browser" || saved.AgentsMD != agents || saved.UserMD != user {
+	if saved.Timezone != "browser" || saved.AgentsMD != agents || saved.UserMD != user ||
+		saved.DefaultAgentsMD != settings.DefaultAgentsMD || saved.DefaultUserMD != settings.DefaultUserMD {
 		t.Fatalf("saved settings mismatch: %+v", saved)
 	}
 

@@ -7,6 +7,7 @@ import remarkGfm from "remark-gfm";
 import { api, collection } from "./api";
 import { type Item, parseMetric, ProposalCard, ReminderDialog, useItemAction } from "./items";
 import { formatDateTime, useSettings } from "./settings";
+import type { ServiceStatus } from "./health";
 
 type Interest = { id: string; title: string };
 type Proposal = { id: string; proposal_key:string; target_type: string; operation: string; rationale_md: string; state: string; evidence_links?:string[];confidence?:number;payload?:object };
@@ -159,6 +160,7 @@ export function ItemWorkspace({ mode }: { mode: "attention" | "library" | "todo"
   const view = mode === "library" ? "all" : mode;
   const items = useQuery({ queryKey: ["items", "workspace", view], queryFn: () => collection<Item>(`/items?view=${view}`) });
   const interests = useQuery({ queryKey: ["interests"], queryFn: () => collection<Interest>("/interests") });
+  const status = useQuery({ queryKey: ["status"], queryFn: () => api<ServiceStatus>("/status"), enabled: mode === "attention" });
   const proposals = useQuery({ queryKey: ["proposals", "pending"], queryFn: () => collection<Proposal>("/proposals?state=pending"), enabled: mode === "attention" });
   const interestNames = new Map((interests.data ?? []).map((entry) => [entry.id, entry.title]));
   const filtered = (items.data ?? []).filter((item) =>
@@ -198,7 +200,14 @@ export function ItemWorkspace({ mode }: { mode: "attention" | "library" | "todo"
           </button>;
         })}
       </section>)}
-      {!items.isPending && filtered.length === 0 && <div className="ledger-empty-state">{mode === "attention" ? "Nothing needs attention right now." : "No matching items."}</div>}
+      {mode === "attention" && status.data && !status.data.health.setup.done && <Alert severity="info">
+        <strong>Setup needs configuration.</strong> {!status.data.health.setup.user_context_set && <>Add your priorities in <NavLink to="/preferences">Preferences</NavLink>. </>}
+        {!status.data.health.setup.has_interest && <>Add an active Interest in <NavLink to="/interests">Configure Monitoring</NavLink>. </>}
+        {!status.data.health.setup.has_watcher && <>Add an active Watcher that applies to an active Interest in <NavLink to="/interests">Set up a Watcher</NavLink>. </>}
+        Configuration does not start an inspection.
+      </Alert>}
+      {mode === "attention" && status.data?.health.setup.done && !status.data.health.watches.some((watch) => watch.last_success_at) && <Alert severity="info">Setup done; inspection not yet verified. Connect an external agent and inspect a Watcher to see coverage.</Alert>}
+      {!items.isPending && filtered.length === 0 && <div className="ledger-empty-state">{mode === "attention" ? status.isPending ? "Checking setup and inspection…" : !status.data ? "Could not check setup and inspection status." : !status.data.health.setup.done ? "No Items yet. Setup still needs the pieces shown above." : !status.data.health.last_run ? "No inspection results yet." : status.data.health.last_run.status === "success" ? "No Items need attention from reported results." : "No Items are listed. Check Activity and Monitoring for inspection coverage." : "No matching items."}</div>}
       {mode === "attention" && (proposals.data?.length ?? 0) > 0 && <section className="ledger-proposals"><h2>Proposals to review <span>{proposals.data?.length}</span></h2>{proposals.data?.map((proposal) => <ProposalCard key={proposal.id} proposal={proposal} candidates={proposals.data} />)}</section>}
     </div>
     {activeId && <Inspector key={activeId} itemId={activeId} close={() => setSelected("")} />}

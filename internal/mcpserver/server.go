@@ -146,6 +146,10 @@ func New(serverURL, version string) *mcp.Server {
 		value, err := caller.call(ctx, http.MethodGet, path, nil)
 		return respond(value, err)
 	})
+	mcp.AddTool(server, &mcp.Tool{Name: "set_user_context", Description: "Save the person's approved USER.md draft directly without starting a Run. Include their priorities and follow-through; never put source credentials here. This changes future Run snapshots only."}, func(ctx context.Context, _ *mcp.CallToolRequest, input app.SetUserContext) (*mcp.CallToolResult, map[string]any, error) {
+		value, err := caller.call(ctx, http.MethodPut, "/settings/user-context", input)
+		return respond(value, err)
+	})
 	mcp.AddTool(server, &mcp.Tool{Name: "get_changes", Description: "Read pages from the exact captured event range returned by start_run. Consume every page before relying on older assumptions."}, func(ctx context.Context, _ *mcp.CallToolRequest, input changesInput) (*mcp.CallToolResult, map[string]any, error) {
 		query := url.Values{"after_seq": {strconv.FormatInt(input.AfterSeq, 10)}, "through_seq": {strconv.FormatInt(input.ThroughSeq, 10)}}
 		if input.Cursor != "" {
@@ -204,7 +208,7 @@ func New(serverURL, version string) *mcp.Server {
 		if input.Payload != nil {
 			payload, _ = json.Marshal(input.Payload)
 		}
-		body := app.CreateProposal{RequestID: input.RequestID, ProposalKey: input.ProposalKey, TargetType: input.TargetType, TargetID: input.TargetID, ExpectedRevision: input.ExpectedRevision, Operation: input.Operation, Payload: payload, RationaleMD: input.RationaleMD,EvidenceLinks:input.EvidenceLinks,Confidence:input.Confidence,DuplicateOf:input.DuplicateOf,ExpiresAt:input.ExpiresAt}
+		body := app.CreateProposal{RequestID: input.RequestID, ProposalKey: input.ProposalKey, TargetType: input.TargetType, TargetID: input.TargetID, ExpectedRevision: input.ExpectedRevision, Operation: input.Operation, Payload: payload, RationaleMD: input.RationaleMD, EvidenceLinks: input.EvidenceLinks, Confidence: input.Confidence, DuplicateOf: input.DuplicateOf, ExpiresAt: input.ExpiresAt}
 		value, err := caller.call(ctx, http.MethodPost, "/proposals", body)
 		return respond(value, err)
 	})
