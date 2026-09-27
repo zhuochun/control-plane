@@ -160,6 +160,49 @@ func (a *App) Runs(ctx context.Context) ([]RunSummary, error) {
 	return items, rows.Err()
 }
 
+func (a *App) RunsPage(ctx context.Context, afterID string, limit int) ([]RunSummary, bool, error) {
+	if limit < 1 || limit > 100 {
+		return nil, false, Invalid("limit must be between 1 and 100")
+	}
+	query := "SELECT " + runColumns + " FROM runs"
+	args := []any{}
+	if afterID != "" {
+		var started int64
+		err := a.Store.DB.QueryRowContext(ctx, "SELECT started_at FROM runs WHERE id=?", afterID).Scan(&started)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, false, Invalid("Continuation cursor is not in this collection")
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		query += " WHERE started_at<? OR (started_at=? AND id<?)"
+		args = append(args, started, started, afterID)
+	}
+	query += " ORDER BY started_at DESC,id DESC LIMIT ?"
+	args = append(args, limit+1)
+	rows, err := a.Store.DB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	items := make([]RunSummary, 0, limit+1)
+	for rows.Next() {
+		run, scanErr := scanRun(rows)
+		if scanErr != nil {
+			return nil, false, scanErr
+		}
+		items = append(items, RunSummary{Run: run, SelectedWatches: run.SelectedWatches})
+	}
+	if err = rows.Err(); err != nil {
+		return nil, false, err
+	}
+	more := len(items) > limit
+	if more {
+		items = items[:limit]
+	}
+	return items, more, nil
+}
+
 func selectWatches(ctx context.Context, tx *sql.Tx, input StartRun, now int64) ([]SelectedWatch, int, error) {
 	if input.Force && !input.WatchIDs.Set {
 		return nil, 0, Invalid("force requires explicit watch_ids")

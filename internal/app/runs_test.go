@@ -4,12 +4,57 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/zhuochun/control-plane/internal/store"
 )
+
+func TestRunsPageMatchesFullHistory(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	for i := 0; i < 7; i++ {
+		_, err = s.DB.ExecContext(ctx, `INSERT INTO runs(id,runner_label,status,started_at,ended_at,lease_expires_at,selected_watches,after_seq,through_seq,context_snapshot) VALUES(?, 'fixture', 'completed', ?, ?, 0, '[]', 0, 0, '{}')`, fmt.Sprintf("run-%d", i), i/2, i/2)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	a := New(s)
+	all, err := a.Runs(ctx)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var got, want []string
+	for _, run := range all {
+		want = append(want, run.ID)
+	}
+	cursor := ""
+	for {
+		page, more, pageErr := a.RunsPage(ctx, cursor, 2)
+		if pageErr != nil {
+			t.Fatal(pageErr)
+		}
+		for _, run := range page {
+			got = append(got, run.ID)
+		}
+		if !more {
+			break
+		}
+		cursor = page[len(page)-1].ID
+	}
+	if !slices.Equal(got, want) {
+		t.Fatalf("paged history: got %v, want %v", got, want)
+	}
+	if _, _, err = a.RunsPage(ctx, "missing", 2); err == nil {
+		t.Fatal("accepted missing cursor")
+	}
+}
 
 func TestRunSelectionAndChangeAcknowledgement(t *testing.T) {
 	ctx := context.Background()

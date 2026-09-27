@@ -3,12 +3,85 @@ package app
 import (
 	"context"
 	"encoding/json"
+	"fmt"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/zhuochun/control-plane/internal/store"
 )
+
+func TestItemsPageMatchesFullCollectionOrderAndFilters(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	a := New(s)
+	a.Now = func() time.Time { return time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC) }
+	raw, err := a.CreateInterest(ctx, CreateInterest{RequestID: "page-interest", Title: "Page search interest", InstructionsMD: "Fixture"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var interest Interest
+	if err = json.Unmarshal(raw, &interest); err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 12; i++ {
+		kind := "note"
+		if i%3 == 0 {
+			kind = "task"
+		}
+		input := PutItem{RequestID: fmt.Sprintf("page-%d", i), DedupeKey: fmt.Sprintf("page:%d", i), Kind: kind, Title: fmt.Sprintf("Item %02d", i), Summary: "Page fixture", Report: Report{SchemaVersion: 1, BodyMD: "Test content"}}
+		if i == 11 {
+			input.Interests = []ItemInterest{{ID: interest.ID, Reason: "Fixture"}}
+		}
+		_, err = a.PutItem(ctx, "", input)
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
+	for _, filter := range []ItemFilters{{View: "all"}, {View: "todo"}, {View: "attention"}, {View: "all", Kind: "task"}, {View: "all", Query: "Item 09"}, {View: "all", Query: "Page search interest"}, {View: "all", InterestID: interest.ID}} {
+		all, err := a.Items(ctx, filter)
+		if err != nil {
+			t.Fatal(err)
+		}
+		var got []string
+		cursor := ""
+		for {
+			page, more, pageErr := a.ItemsPage(ctx, filter, cursor, 2)
+			if pageErr != nil {
+				t.Fatal(pageErr)
+			}
+			for _, item := range page {
+				got = append(got, item.ID)
+			}
+			if !more {
+				break
+			}
+			if len(page) != 2 {
+				t.Fatalf("short nonfinal page: %+v", filter)
+			}
+			cursor = page[len(page)-1].ID
+		}
+		want := make([]string, 0, len(all))
+		for _, item := range all {
+			want = append(want, item.ID)
+		}
+		if !slices.Equal(got, want) {
+			t.Fatalf("paged order differs for %+v: got %v, want %v", filter, got, want)
+		}
+	}
+	byInterestTitle, err := a.Items(ctx, ItemFilters{Query: "Page search interest"})
+	if err != nil || len(byInterestTitle) != 1 {
+		t.Fatalf("Interest title search: %d Items, %v", len(byInterestTitle), err)
+	}
+	if _, _, err = a.ItemsPage(ctx, ItemFilters{View: "todo"}, "missing", 2); err == nil {
+		t.Fatal("accepted cursor outside collection")
+	}
+}
 
 func TestItemContentAndLocalStateStayIndependent(t *testing.T) {
 	ctx := context.Background()

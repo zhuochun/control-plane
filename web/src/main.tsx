@@ -74,14 +74,14 @@ function Activity() {
   const runs = useQuery({
     queryKey: ["runs"],
     queryFn: () =>
-      collection<{
+      api<{items: {
         id: string;
         runner_label: string;
         status: string;
         started_at: string;
         selected_watches: unknown[];
         summary: string;
-      }>("/runs"),
+      }[]; next_cursor: string | null}>("/runs?limit=20"),
   });
   const proposals = useQuery({
     queryKey: ["proposals", "history"],
@@ -97,8 +97,8 @@ function Activity() {
       <div className="activity-summary" aria-label="Activity summary">
         <div className="summary-metric gold"><strong>{status.data?.health.due_count ?? "—"}</strong><span>Watches due</span></div>
         <div className="summary-metric blue">
-          <strong>{runs.data?.length ?? "—"}</strong>
-          <span>agent runs</span>
+          <strong>{runs.data ? `${runs.data.items.length}${runs.data.next_cursor ? "+" : ""}` : "—"}</strong>
+          <span>recent agent runs</span>
         </div>
         <div className="summary-metric gold">
           <strong>{proposals.data?.length ?? "—"}</strong>
@@ -129,13 +129,13 @@ function Activity() {
         {runs.isError && (
           <Alert severity="error">Cannot load run history.</Alert>
         )}
-        {runs.data?.length === 0 && (
+        {runs.data?.items.length === 0 && (
           <div className="empty-inline">
             <strong>No agent runs yet.</strong>
             <p>Due Watches will be offered through the next agent brief.</p>
           </div>
         )}
-        {runs.data?.slice(0, 20).map((run) => (
+        {runs.data?.items.map((run) => (
           <div className="run-row" key={run.id}>
             <div>
               <strong>{run.runner_label}</strong>
