@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useInfiniteQuery, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, TextField, useMediaQuery } from "@mui/material";
 import { NavLink } from "react-router";
 import ReactMarkdown from "react-markdown";
@@ -158,15 +158,25 @@ export function ItemWorkspace({ mode }: { mode: "attention" | "library" | "todo"
   const [selected, setSelected] = useState<string | null>(null);
   const [newItem,setNewItem]=useState(false);
   const view = mode === "library" ? "all" : mode;
-  const items = useQuery({ queryKey: ["items", "workspace", view], queryFn: () => collection<Item>(`/items?view=${view}`) });
+  const items = useInfiniteQuery({
+    queryKey: ["items", "workspace", view, kind, interest, search.trim()],
+    initialPageParam: "",
+    queryFn: ({ pageParam }) => {
+      const query = new URLSearchParams({ view, limit: "100" });
+      if (kind) query.set("kind", kind);
+      if (interest) query.set("interest_id", interest);
+      if (search.trim()) query.set("q", search.trim());
+      if (pageParam) query.set("cursor", pageParam);
+      return api<{ items: Item[]; next_cursor: string | null }>(`/items?${query}`);
+    },
+    getNextPageParam: (last) => last.next_cursor ?? undefined,
+    refetchInterval: mode === "attention" ? 5000 : false,
+  });
   const interests = useQuery({ queryKey: ["interests"], queryFn: () => collection<Interest>("/interests") });
   const status = useQuery({ queryKey: ["status"], queryFn: () => api<ServiceStatus>("/status"), enabled: mode === "attention" });
   const proposals = useQuery({ queryKey: ["proposals", "pending"], queryFn: () => collection<Proposal>("/proposals?state=pending"), enabled: mode === "attention" });
   const interestNames = new Map((interests.data ?? []).map((entry) => [entry.id, entry.title]));
-  const filtered = (items.data ?? []).filter((item) =>
-    (!kind || item.kind === kind) && (!interest || item.interests?.some((reason)=>reason.id===interest)) &&
-    (!search.trim() || `${item.title} ${item.summary} ${item.interests?.map((reason)=>interestNames.get(reason.id) ?? "").join(" ") ?? ""}`.toLowerCase().includes(search.trim().toLowerCase()))
-  );
+  const filtered = items.data?.pages.flatMap((page) => page.items) ?? [];
   const due = filtered.filter((item) => stateOf(item) === "Due");
   const rest = filtered.filter((item) => stateOf(item) !== "Due");
   const groups = mode === "attention" ? [["Due", due], [rest.every((item) => stateOf(item) === "New") ? "New" : "New & Todo", rest]] as const : [[mode === "todo" ? "Open Todos" : "All items", filtered]] as const;
@@ -174,7 +184,7 @@ export function ItemWorkspace({ mode }: { mode: "attention" | "library" | "todo"
   return <div className={`item-workspace${activeId ? "" : " inspector-closed"}`}>
     <div className="workspace-list">
       <div className="workspace-toolbar">
-        <div className="workspace-title"><h1>{mode === "attention" ? "Attention" : mode === "todo" ? "Todos" : "All items"}</h1><span className="workspace-count">{filtered.length}</span><Button size="small" onClick={()=>setNewItem(true)}>New Item</Button></div>
+        <div className="workspace-title"><h1>{mode === "attention" ? "Attention" : mode === "todo" ? "Todos" : "All items"}</h1><span className="workspace-count">{filtered.length}{items.hasNextPage ? "+" : ""}</span><Button size="small" onClick={()=>setNewItem(true)}>New Item</Button></div>
         <div className="workspace-totals"><span>Due <strong>{due.length}</strong></span><span>New <strong>{filtered.filter((item) => stateOf(item) === "New").length}</strong></span></div>
       </div>
       <div className="workspace-filters">
@@ -200,6 +210,7 @@ export function ItemWorkspace({ mode }: { mode: "attention" | "library" | "todo"
           </button>;
         })}
       </section>)}
+      {items.hasNextPage && <Button disabled={items.isFetchingNextPage} onClick={() => items.fetchNextPage()}>{items.isFetchingNextPage ? "Loading…" : "Load more items"}</Button>}
       {mode === "attention" && status.data && !status.data.health.setup.done && <Alert severity="info">
         <strong>Setup needs configuration.</strong> {!status.data.health.setup.user_context_set && <>Add your priorities in <NavLink to="/preferences">Preferences</NavLink>. </>}
         {!status.data.health.setup.has_interest && <>Add an active Interest in <NavLink to="/interests">Configure Monitoring</NavLink>. </>}

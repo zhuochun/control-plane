@@ -1,5 +1,12 @@
 import { expect, test } from "@playwright/test";
 
+test("Todos opens directly and survives reload", async ({ page }) => {
+  await page.goto("/todos");
+  await expect(page.getByRole("heading", { name: "Todos" })).toBeVisible();
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Todos" })).toBeVisible();
+});
+
 test("Attention distinguishes incomplete setup from an uninspected plane", async ({ page }) => {
   let setupDone = false;
   await page.route("**/api/v1/status", async (route) => {

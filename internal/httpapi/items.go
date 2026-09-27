@@ -1,18 +1,41 @@
 package httpapi
 
 import (
+	"encoding/base64"
 	"net/http"
+	"strconv"
 
 	"github.com/zhuochun/control-plane/internal/app"
 )
 
 func itemRoutes(mux *http.ServeMux, a *app.App) {
 	mux.HandleFunc("GET /api/v1/items", read(func(r *http.Request) (any, error) {
-		items, err := a.Items(r.Context(), app.ItemFilters{View: r.URL.Query().Get("view"), Kind: r.URL.Query().Get("kind"), InterestID: r.URL.Query().Get("interest_id"), WatchID: r.URL.Query().Get("watch_id"), Query: r.URL.Query().Get("q"), DedupeKey: r.URL.Query().Get("dedupe_key")})
+		limit := 50
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed < 1 || parsed > 100 {
+				return nil, app.Invalid("limit must be between 1 and 100")
+			}
+			limit = parsed
+		}
+		var afterID string
+		if cursor := r.URL.Query().Get("cursor"); cursor != "" {
+			decoded, err := base64.RawURLEncoding.DecodeString(cursor)
+			if err != nil {
+				return nil, app.Invalid("Invalid continuation cursor")
+			}
+			afterID = string(decoded)
+		}
+		items, more, err := a.ItemsPage(r.Context(), app.ItemFilters{View: r.URL.Query().Get("view"), Kind: r.URL.Query().Get("kind"), InterestID: r.URL.Query().Get("interest_id"), WatchID: r.URL.Query().Get("watch_id"), Query: r.URL.Query().Get("q"), DedupeKey: r.URL.Query().Get("dedupe_key")}, afterID, limit)
 		if err != nil {
 			return nil, err
 		}
-		return paginate(r, items, func(item app.Item) string { return item.ID })
+		result := page[app.Item]{Items: items}
+		if more {
+			cursor := base64.RawURLEncoding.EncodeToString([]byte(items[len(items)-1].ID))
+			result.NextCursor = &cursor
+		}
+		return result, nil
 	}))
 	mux.HandleFunc("GET /api/v1/items/{id}", read(func(r *http.Request) (any, error) { return a.Item(r.Context(), r.PathValue("id")) }))
 	mux.HandleFunc("POST /api/v1/items", command(func(r *http.Request, input app.PutItem) (any, error) { return a.PutItem(r.Context(), "", input) }))

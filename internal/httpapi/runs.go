@@ -1,6 +1,7 @@
 package httpapi
 
 import (
+	"encoding/base64"
 	"net/http"
 	"strconv"
 
@@ -28,11 +29,32 @@ func runRoutes(mux *http.ServeMux, a *app.App) {
 		return a.ChangesPage(r.Context(), after, through, r.URL.Query().Get("cursor"), limit)
 	}))
 	mux.HandleFunc("GET /api/v1/runs", read(func(r *http.Request) (any, error) {
-		items, err := a.Runs(r.Context())
+		limit := 50
+		if raw := r.URL.Query().Get("limit"); raw != "" {
+			parsed, err := strconv.Atoi(raw)
+			if err != nil || parsed < 1 || parsed > 100 {
+				return nil, app.Invalid("limit must be between 1 and 100")
+			}
+			limit = parsed
+		}
+		var afterID string
+		if cursor := r.URL.Query().Get("cursor"); cursor != "" {
+			decoded, err := base64.RawURLEncoding.DecodeString(cursor)
+			if err != nil {
+				return nil, app.Invalid("Invalid continuation cursor")
+			}
+			afterID = string(decoded)
+		}
+		items, more, err := a.RunsPage(r.Context(), afterID, limit)
 		if err != nil {
 			return nil, err
 		}
-		return paginate(r, items, func(item app.RunSummary) string { return item.ID })
+		result := page[app.RunSummary]{Items: items}
+		if more {
+			cursor := base64.RawURLEncoding.EncodeToString([]byte(items[len(items)-1].ID))
+			result.NextCursor = &cursor
+		}
+		return result, nil
 	}))
 	mux.HandleFunc("GET /api/v1/runs/{id}", read(func(r *http.Request) (any, error) { return a.RunDetail(r.Context(), r.PathValue("id")) }))
 	mux.HandleFunc("POST /api/v1/runs", command(func(r *http.Request, input app.StartRun) (any, error) { return a.StartRun(r.Context(), input) }))

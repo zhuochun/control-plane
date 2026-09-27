@@ -500,20 +500,20 @@ type ItemFilters struct{ View, Kind, InterestID, WatchID, Query, DedupeKey strin
 
 const attentionPredicate = `(origin<>'agent' OR watch_id IS NOT NULL) AND (todo_state='todo' OR acknowledged_content_version<content_version OR (remind_at IS NOT NULL AND remind_at<=?))`
 
-func (a *App) Items(ctx context.Context, filter ItemFilters) ([]Item, error) {
-	query := "SELECT " + itemColumns + " FROM items WHERE 1=1"
+func (a *App) itemWhere(ctx context.Context, filter ItemFilters) (string, []any, error) {
+	query := " FROM items WHERE 1=1"
 	args := []any{}
 	if filter.InterestID != "" {
 		canonical, err := resolveID(ctx, a.Store.DB, "interests", filter.InterestID)
 		if err != nil {
-			return nil, err
+			return "", nil, err
 		}
 		filter.InterestID = canonical
 	}
 	if filter.WatchID != "" {
 		canonical, err := resolveID(ctx, a.Store.DB, "watches", filter.WatchID)
 		if err != nil {
-			return nil, err
+			return "", nil, err
 		}
 		filter.WatchID = canonical
 	}
@@ -535,9 +535,9 @@ func (a *App) Items(ctx context.Context, filter ItemFilters) ([]Item, error) {
 	}
 	if filter.Query != "" {
 		escaped := strings.NewReplacer("\\", "\\\\", "%", "\\%", "_", "\\_").Replace(filter.Query)
-		query += ` AND (title LIKE ? ESCAPE '\' OR summary LIKE ? ESCAPE '\' OR json_extract(content,'$.context_md') LIKE ? ESCAPE '\')`
+		query += ` AND (title LIKE ? ESCAPE '\' OR summary LIKE ? ESCAPE '\' OR json_extract(content,'$.context_md') LIKE ? ESCAPE '\' OR EXISTS (SELECT 1 FROM item_interests ii JOIN interests i ON i.id=ii.interest_id WHERE ii.item_id=items.id AND i.title LIKE ? ESCAPE '\'))`
 		pattern := "%" + escaped + "%"
-		args = append(args, pattern, pattern, pattern)
+		args = append(args, pattern, pattern, pattern, pattern)
 	}
 	switch filter.View {
 	case "attention":
@@ -549,9 +549,20 @@ func (a *App) Items(ctx context.Context, filter ItemFilters) ([]Item, error) {
 		query += " AND todo_state='done'"
 	case "", "all":
 	default:
-		return nil, Invalid("view must be attention, todo, done, or all")
+		return "", nil, Invalid("view must be attention, todo, done, or all")
 	}
-	query += ` ORDER BY CASE WHEN remind_at IS NOT NULL AND remind_at<=? THEN 0 WHEN todo_state='todo' THEN 1 ELSE 2 END, COALESCE(remind_at,content_updated_at),content_updated_at DESC,id`
+	return query, args, nil
+}
+
+const itemOrderBucket = `CASE WHEN remind_at IS NOT NULL AND remind_at<=? THEN 0 WHEN todo_state='todo' THEN 1 ELSE 2 END`
+const itemOrder = ` ORDER BY ` + itemOrderBucket + `, COALESCE(remind_at,content_updated_at),content_updated_at DESC,id`
+
+func (a *App) Items(ctx context.Context, filter ItemFilters) ([]Item, error) {
+	where, args, err := a.itemWhere(ctx, filter)
+	if err != nil {
+		return nil, err
+	}
+	query := "SELECT " + itemColumns + where + itemOrder
 	args = append(args, a.Now().UTC().UnixMilli())
 	rows, err := a.Store.DB.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -567,4 +578,55 @@ func (a *App) Items(ctx context.Context, filter ItemFilters) ([]Item, error) {
 		items = append(items, item)
 	}
 	return items, rows.Err()
+}
+
+// ItemsPage limits database work and response size before decoding Item content.
+// The cursor uses the same Item ID as the existing HTTP collection contract.
+func (a *App) ItemsPage(ctx context.Context, filter ItemFilters, afterID string, limit int) ([]Item, bool, error) {
+	if limit < 1 || limit > 100 {
+		return nil, false, Invalid("limit must be between 1 and 100")
+	}
+	where, args, err := a.itemWhere(ctx, filter)
+	if err != nil {
+		return nil, false, err
+	}
+	now := a.Now().UTC().UnixMilli()
+	if afterID != "" {
+		var bucket int
+		var sortTime, updated int64
+		cursorArgs := append([]any{now}, args...)
+		cursorArgs = append(cursorArgs, afterID)
+		err = a.Store.DB.QueryRowContext(ctx, "SELECT "+itemOrderBucket+",COALESCE(remind_at,content_updated_at),content_updated_at"+where+" AND id=?", cursorArgs...).Scan(&bucket, &sortTime, &updated)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, false, Invalid("Continuation cursor is not in this collection")
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		where += ` AND (` + itemOrderBucket + `>? OR (` + itemOrderBucket + `=? AND (COALESCE(remind_at,content_updated_at)>? OR (COALESCE(remind_at,content_updated_at)=? AND (content_updated_at<? OR (content_updated_at=? AND id>?))))))`
+		args = append(args, now, bucket, now, bucket, sortTime, sortTime, updated, updated, afterID)
+	}
+	query := "SELECT " + itemColumns + where + itemOrder + " LIMIT ?"
+	args = append(args, now, limit+1)
+	rows, err := a.Store.DB.QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, false, err
+	}
+	defer rows.Close()
+	items := make([]Item, 0, limit+1)
+	for rows.Next() {
+		item, scanErr := scanItem(rows)
+		if scanErr != nil {
+			return nil, false, scanErr
+		}
+		items = append(items, item)
+	}
+	if err = rows.Err(); err != nil {
+		return nil, false, err
+	}
+	more := len(items) > limit
+	if more {
+		items = items[:limit]
+	}
+	return items, more, nil
 }
