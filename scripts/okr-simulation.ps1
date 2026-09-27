@@ -113,6 +113,7 @@ function New-MetricItem {
     param(
         [System.Collections.IDictionary]$Metric,
         [object]$Existing,
+        [string]$InterestID,
         [string]$CurrentPhase,
         [string]$ObservedThrough
     )
@@ -145,6 +146,7 @@ $table
         kind = 'outcome'
         title = $Metric.title
         summary = $summary
+        interests = @([ordered]@{ id = $InterestID; reason = "Outcome metric for $($Metric.objective)" })
         sources = @([ordered]@{
             id = 'okr-fixture'
             url = 'https://example.com/fixtures/okr-simulation'
@@ -172,12 +174,13 @@ try {
 
     $watchPage = Invoke-Aicp @('watch', 'list', '--limit', '100')
     $watch = @($watchPage.items) | Where-Object {
-        $_.interest_id -eq $interest.id -and $_.source.locator -eq $watchLocator
+        $_.interest_ids -contains $interest.id -and $_.source.locator -eq $watchLocator
     } | Select-Object -First 1
     if (-not $watch) {
         $watch = Invoke-Aicp @('watch', 'create', '--file', (Write-Request 'watch-create' ([ordered]@{
             request_id = New-RequestID 'watch'
-            interest_id = $interest.id
+            matching_policy = 'explicit'
+            interest_ids = @($interest.id)
             source = [ordered]@{ kind = 'fixture'; locator = $watchLocator }
             instructions_md = 'Compare each OKR metric with its previous period and target. Preserve the direction and unit.'
             interval_seconds = 7200
@@ -208,7 +211,7 @@ try {
     $cycle = if ($Phase -eq 'baseline') { 1 } else { 2 }
     $items = @($metrics | ForEach-Object {
         $existing = if ($existingByKey.ContainsKey($_.key)) { $existingByKey[$_.key] } else { $null }
-        New-MetricItem -Metric $_ -Existing $existing -CurrentPhase $Phase -ObservedThrough $observedThrough
+        New-MetricItem -Metric $_ -Existing $existing -InterestID $interest.id -CurrentPhase $Phase -ObservedThrough $observedThrough
     })
     $run = Invoke-Aicp @('run', 'start', '--runner-label', 'okr-simulation', '--watch', $watch.id, '--force')
     $publish = Invoke-Aicp @('run', 'submit', $watch.id, '--file', (Write-Request 'run-publish' ([ordered]@{

@@ -23,9 +23,10 @@ import {
 
 export type Source = {
   id: string;
-  url: string;
+  url?: string;
   label: string;
-  observed_at: string;
+  observed_at?: string;
+  source_date?: string;
 };
 export type ReportAction = {
   id: string;
@@ -43,7 +44,9 @@ export type Item = {
   id: string;
   dedupe_key: string;
   kind: string;
-  interest_id?: string;
+  origin: "agent" | "user" | "legacy";
+  interests: {id:string;reason:string}[];
+  watch_id?: string;
   title: string;
   summary: string;
   sources: Source[];
@@ -62,10 +65,14 @@ export type Item = {
 };
 type Proposal = {
   id: string;
+  proposal_key:string;
   target_type: string;
   operation: string;
   rationale_md: string;
   state: string;
+  evidence_links?:string[];
+  confidence?:number;
+  payload?:object;
 };
 
 const when = (value: string, timezone?: string) =>
@@ -439,18 +446,24 @@ function OutcomeCard({ item, timezone }: { item: Item; timezone?: string }) {
 
 export function ProposalCard({ proposal }: { proposal: Proposal }) {
   const cache = useQueryClient();
-  const request = useRef<{ resolution: string; id: string } | null>(null);
+  const [mergeOpen,setMergeOpen]=useState(false);
+  const [mergeInto,setMergeInto]=useState("");
+  const candidates=useQuery({queryKey:["proposals","pending"],queryFn:()=>collection<Proposal>("/proposals?state=pending")});
+  const planPreview=useQuery({queryKey:["proposal-plan-preview",proposal.id],queryFn:()=>api<{due_before:number;due_after:number;changes:{target_type:string;operation:string;target:string;cursor_reset:boolean;affected_items:number}[]}>("/config/plans/preview",proposal.payload,"POST"),enabled:proposal.target_type==="config_plan"&&!!proposal.payload});
+  const request = useRef<{ signature: string; id: string } | null>(null);
   const resolve = useMutation({
-    mutationFn: (resolution: string) => {
-      if (request.current?.resolution !== resolution)
-        request.current = { resolution, id: crypto.randomUUID() };
+    mutationFn: (decision: {resolution:string;snooze_until?:string;merge_into?:string}) => {
+      const signature=JSON.stringify(decision);
+      if (request.current?.signature !== signature)
+        request.current = { signature, id: crypto.randomUUID() };
       return api<Proposal>(
         `/proposals/${proposal.id}/resolve`,
-        { request_id: request.current.id, resolution },
+        { request_id: request.current.id, ...decision },
         "POST",
       );
     },
     onSuccess: () => {
+      setMergeOpen(false);
       cache.invalidateQueries({ queryKey: ["proposals"] });
       cache.invalidateQueries({ queryKey: ["interests"] });
       cache.invalidateQueries({ queryKey: ["watches"] });
@@ -467,18 +480,35 @@ export function ProposalCard({ proposal }: { proposal: Proposal }) {
         </div>
       </div>
       <ReactMarkdown skipHtml>{proposal.rationale_md}</ReactMarkdown>
+      {proposal.confidence!==undefined&&<small>Confidence: {Math.round(proposal.confidence*100)}%</small>}
+      {!!proposal.evidence_links?.length&&<div>{proposal.evidence_links.map((link)=><a key={link} href={link} target="_blank" rel="noopener noreferrer">{link}</a>)}</div>}
+      {proposal.target_type==="config_plan"&&<div>
+        {planPreview.isPending&&<p>Checking the change set…</p>}
+        {planPreview.isError&&<Alert severity="error">Change set cannot be previewed: {planPreview.error.message}</Alert>}
+        {planPreview.data&&<div><p>Due Watchers: {planPreview.data.due_before} → {planPreview.data.due_after}</p>
+          {planPreview.data.changes.map((change,index)=><p key={index}>{change.operation} {change.target_type} {change.target}{change.cursor_reset&&" · resets source cursor"}{change.affected_items>0&&` · ${change.affected_items} existing Items`}</p>)}
+        </div>}
+      </div>}
       <div className="proposal-actions">
         <Button
           variant="contained"
           size="small"
-          onClick={() => resolve.mutate("accepted")}
+          disabled={resolve.isPending||(proposal.target_type==="config_plan"&&!planPreview.data)}
+          onClick={() => resolve.mutate({resolution:"accepted"})}
         >
           Accept
         </Button>
-        <Button size="small" onClick={() => resolve.mutate("rejected")}>
+        <Button size="small" onClick={() => resolve.mutate({resolution:"rejected"})}>
           Reject
         </Button>
+        <Button size="small" onClick={()=>resolve.mutate({resolution:"snoozed",snooze_until:new Date(Date.now()+7*86400000).toISOString()})}>Snooze 7 days</Button>
+        {(candidates.data?.length??0)>1&&<Button size="small" onClick={()=>setMergeOpen(true)}>Merge…</Button>}
       </div>
+      <Dialog open={mergeOpen} onClose={()=>setMergeOpen(false)}><DialogTitle>Merge duplicate proposal</DialogTitle><DialogContent>
+        <TextField select fullWidth label="Keep proposal" value={mergeInto} onChange={(event)=>setMergeInto(event.target.value)}>
+          {candidates.data?.filter((candidate)=>candidate.id!==proposal.id).map((candidate)=><MenuItem key={candidate.id} value={candidate.id}>{candidate.proposal_key}</MenuItem>)}
+        </TextField>
+      </DialogContent><DialogActions><Button onClick={()=>setMergeOpen(false)}>Cancel</Button><Button disabled={!mergeInto||resolve.isPending} onClick={()=>resolve.mutate({resolution:"merged",merge_into:mergeInto})}>Merge</Button></DialogActions></Dialog>
       {resolve.isError && (
         <Alert severity="error">
           {resolve.error.message} Refresh to review the current configuration.
@@ -928,6 +958,8 @@ export function ItemDetail() {
     },
   });
   const item = query.data;
+  const watch = useQuery({queryKey:["watch",item?.watch_id],queryFn:()=>api<{slug:string;source:{kind:string;locator:string}}>(`/watches/${item?.watch_id}`),enabled:!!item?.watch_id});
+  const interests = useQuery({queryKey:["interests"],queryFn:()=>collection<{id:string;slug:string;title:string}>("/interests?state=all")});
   function apply(action: object) {
     if (!item) return;
     applyItemAction(item, action);
@@ -1042,20 +1074,28 @@ export function ItemDetail() {
           <section className="panel">
             <h2>Sources</h2>
             <div className="sources">
-              {item.sources.map((source) => (
-                <a
-                  key={source.id}
-                  href={source.url}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
+              {item.sources.length===0 && <p>No source reference was supplied.</p>}
+              {item.sources.map((source) => source.url ? (
+                <a key={source.id} href={source.url} target="_blank" rel="noopener noreferrer">
                   {source.label}
-                  <small>
-                    Observed {when(source.observed_at, settings.data?.timezone)}
-                  </small>
+                  {source.observed_at && <small>Observed {when(source.observed_at, settings.data?.timezone)}</small>}
                 </a>
-              ))}
+              ) : <div key={source.id}>{source.label || "User-supplied source date"}<small>{source.source_date}</small></div>)}
             </div>
+            {item.watch_id && <p>Originating Watcher: <NavLink to={`/interests#watcher-${watch.data?.slug ?? ""}`}>{watch.data?.slug ?? item.watch_id}</NavLink></p>}
+            {item.origin==="legacy"&&<p>Historical Item: the original source or relevance explanation may be unavailable.</p>}
+            {item.interests?.length>0 && <div>
+              <h3>Why this matters</h3>
+              {item.interests.map((reason)=>{
+                const interest=interests.data?.find((entry)=>entry.id===reason.id);
+                return <p key={reason.id}><NavLink to={`/interests#interest-${interest?.slug ?? ""}`}>{interest?.title ?? reason.id}</NavLink>: {reason.reason || "Historical assignment; original explanation unavailable."}</p>
+              })}
+            </div>}
+            <p>In Attention because {[
+              item.todo_state==="todo"?"Todo is open":null,
+              item.remind_at && new Date(item.remind_at)<=new Date()?"reminder is due":null,
+              item.acknowledged_content_version<item.content_version?"content update is unacknowledged":null,
+            ].filter(Boolean).join(", ") || "no current trigger"}.</p>
           </section>
           <section className="panel">
             <h2>Your note</h2>

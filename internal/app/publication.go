@@ -93,15 +93,8 @@ func (a *App) SubmitWatchFindings(ctx context.Context, runID, watchID string, in
 		if err != nil {
 			return nil, err
 		}
-		interest, err := getInterest(ctx, tx, watch.InterestID)
-		if err != nil {
-			return nil, err
-		}
-		if watch.State != "active" || watch.Revision != captured.Revision || input.ExpectedWatchRevision != captured.Revision {
-			return nil, &Error{Status: 409, Code: "watch_changed", Message: "Watch configuration changed during the run"}
-		}
-		if interest.State != "active" || interest.Revision != captured.InterestRevision {
-			return nil, &Error{Status: 409, Code: "interest_changed", Message: "Interest configuration changed during the run"}
+		if input.ExpectedWatchRevision != captured.Revision {
+			return nil, &Error{Status: 409, Code: "watch_revision_mismatch", Message: "Result must use the Run's captured Watcher revision"}
 		}
 		if !rawJSONEqual(input.Coverage.CursorBefore, captured.Cursor) {
 			return nil, Invalid("coverage.cursor_before must match the captured Watch cursor")
@@ -145,15 +138,28 @@ func (a *App) SubmitWatchFindings(ctx context.Context, runID, watchID string, in
 			if entry.WatchID != nil && *entry.WatchID != watchID {
 				return nil, Invalid("item watch_id conflicts with the submitting Watch")
 			}
-			if entry.InterestID != nil && *entry.InterestID != watch.InterestID {
-				return nil, Invalid("item interest_id conflicts with the submitting Watch")
+			if len(entry.Interests) == 0 {
+				return nil, Invalid("source-derived Items need at least one Interest reason")
+			}
+			allowed := map[string]bool{}
+			for _, interest := range captured.Interests {
+				allowed[interest.ID] = true
+			}
+			for i := range entry.Interests {
+				id, resolveErr := resolveID(ctx, tx, "interests", entry.Interests[i].ID)
+				if resolveErr != nil {
+					return nil, resolveErr
+				}
+				if !allowed[id] {
+					return nil, Invalid("Item Interest was not captured for this Run")
+				}
+				entry.Interests[i].ID = id
 			}
 			if len(entry.Sources) == 0 {
 				return nil, Invalid("items submitted by a Watch need at least one source")
 			}
 			entry.WatchID = &watchID
-			entry.InterestID = &watch.InterestID
-			result, err := a.putItemTx(ctx, tx, "", entry)
+			result, err := a.putItemTx(ctx, tx, "", entry, "agent")
 			if err != nil {
 				return nil, err
 			}
@@ -171,16 +177,25 @@ func (a *App) SubmitWatchFindings(ctx context.Context, runID, watchID string, in
 				steps := run.StartedAt.Sub(next)/interval + 1
 				next = next.Add(steps * interval)
 			}
-			_, err = tx.ExecContext(ctx, `UPDATE watches SET cursor=?,next_due_at=? WHERE id=?`, cursor, next.UnixMilli(), watchID)
-			if err != nil {
-				return nil, err
+			if watch.SourceGeneration == captured.SourceGeneration && watch.Source == captured.Source && rawJSONEqual(watch.Cursor, captured.Cursor) {
+				if watch.Revision == captured.Revision {
+					_, err = tx.ExecContext(ctx, `UPDATE watches SET cursor=?,next_due_at=? WHERE id=?`, cursor, next.UnixMilli(), watchID)
+				} else {
+					_, err = tx.ExecContext(ctx, `UPDATE watches SET cursor=? WHERE id=?`, cursor, watchID)
+				}
+				if err != nil {
+					return nil, err
+				}
 			}
 		}
 		record, err := json.Marshal(struct {
-			Error    string          `json:"error,omitempty"`
-			Coverage Coverage        `json:"coverage"`
-			Items    []SubmittedItem `json:"items"`
-		}{Error: input.Error, Coverage: input.Coverage, Items: submitted})
+			Error                    string          `json:"error,omitempty"`
+			Coverage                 Coverage        `json:"coverage"`
+			Items                    []SubmittedItem `json:"items"`
+			CapturedInterests        []InterestMatch `json:"captured_interests"`
+			CapturedSource           WatchSource     `json:"captured_source"`
+			CapturedSourceGeneration int64           `json:"captured_source_generation"`
+		}{Error: input.Error, Coverage: input.Coverage, Items: submitted, CapturedInterests: captured.Interests, CapturedSource: captured.Source, CapturedSourceGeneration: captured.SourceGeneration})
 		if err != nil {
 			return nil, err
 		}

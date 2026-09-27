@@ -35,6 +35,12 @@ func read(run func(*http.Request) (any, error)) http.HandlerFunc {
 }
 
 func configurationRoutes(mux *http.ServeMux, a *app.App) {
+	mux.HandleFunc("POST /api/v1/config/plans/preview", command(func(r *http.Request, input app.ConfigPlan) (any, error) {
+		return a.PreviewConfigPlan(r.Context(), input)
+	}))
+	mux.HandleFunc("POST /api/v1/config/plans/apply", command(func(r *http.Request, input app.ApplyConfigPlan) (any, error) {
+		return a.CommitConfigPlan(r.Context(), input)
+	}))
 	mux.HandleFunc("GET /api/v1/interests", read(func(r *http.Request) (any, error) {
 		state := r.URL.Query().Get("state")
 		if r.URL.Query().Get("all") == "1" {

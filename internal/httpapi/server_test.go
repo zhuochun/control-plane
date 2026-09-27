@@ -60,3 +60,44 @@ func TestRejectsNonLoopbackHost(t *testing.T) {
 		t.Fatalf("status %d", response.Code)
 	}
 }
+
+func TestWatcherConfigurationUsesNewShapeWithoutStartingRun(t *testing.T) {
+	s, err := store.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	handler := New(app.New(s), http.NotFoundHandler(), "test")
+	call := func(method, path, body string) *httptest.ResponseRecorder {
+		request := httptest.NewRequest(method, "http://127.0.0.1:7331/api/v1"+path, strings.NewReader(body))
+		if body != "" {
+			request.Header.Set("Content-Type", "application/json")
+		}
+		response := httptest.NewRecorder()
+		handler.ServeHTTP(response, request)
+		return response
+	}
+	interest := call("POST", "/interests", `{"slug":"delivery-risk","title":"Delivery risk"}`)
+	if interest.Code != 200 {
+		t.Fatalf("interest create: %d %s", interest.Code, interest.Body.String())
+	}
+	legacy := call("POST", "/watches", `{"interest_id":"delivery-risk","source":{"kind":"gmail","locator":"inbox"}}`)
+	if legacy.Code != 400 {
+		t.Fatalf("obsolete single-parent payload accepted: %d %s", legacy.Code, legacy.Body.String())
+	}
+	watch := call("POST", "/watches", `{"slug":"gmail-inbox","matching_policy":"broad","source":{"kind":"gmail","locator":"inbox"}}`)
+	if watch.Code != 200 {
+		t.Fatalf("Watcher create: %d %s", watch.Code, watch.Body.String())
+	}
+	got := call("GET", "/watches/gmail-inbox", "")
+	if got.Code != 200 || !strings.Contains(got.Body.String(), `"matching_policy":"broad"`) {
+		t.Fatalf("slug lookup failed: %d %s", got.Code, got.Body.String())
+	}
+	var count int
+	if err = s.DB.QueryRow("SELECT count(*) FROM runs").Scan(&count); err != nil {
+		t.Fatal(err)
+	}
+	if count != 0 {
+		t.Fatalf("configuration claimed a source Run: %d", count)
+	}
+}

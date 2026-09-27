@@ -20,8 +20,9 @@ const contextPageBytes = 64 << 10
 type SelectedWatch struct {
 	ID               string          `json:"id"`
 	Revision         int64           `json:"revision"`
-	InterestID       string          `json:"interest_id"`
-	InterestRevision int64           `json:"interest_revision"`
+	SourceGeneration int64           `json:"source_generation"`
+	MatchingPolicy   string          `json:"matching_policy"`
+	Interests        []InterestMatch `json:"interests"`
 	Source           WatchSource     `json:"source"`
 	InstructionsMD   string          `json:"instructions_md"`
 	Cursor           json.RawMessage `json:"cursor"`
@@ -31,19 +32,24 @@ type SelectedWatch struct {
 	RelatedItems     []AttentionItem `json:"related_items"`
 }
 
+type InterestMatch struct {
+	ID       string `json:"id"`
+	Revision int64  `json:"revision"`
+}
+
 type AttentionItem struct {
-	ID                         string     `json:"id"`
-	Kind                       string     `json:"kind"`
-	InterestID                 *string    `json:"interest_id,omitempty"`
-	WatchID                    *string    `json:"watch_id,omitempty"`
-	ParentID                   *string    `json:"parent_id,omitempty"`
-	Title                      string     `json:"title"`
-	Summary                    string     `json:"summary"`
-	ContentVersion             int64      `json:"content_version"`
-	TodoState                  string     `json:"todo_state"`
-	RemindAt                   *time.Time `json:"remind_at,omitempty"`
-	AcknowledgedContentVersion int64      `json:"acknowledged_content_version"`
-	StateVersion               int64      `json:"state_version"`
+	ID                         string         `json:"id"`
+	Kind                       string         `json:"kind"`
+	Interests                  []ItemInterest `json:"interests"`
+	WatchID                    *string        `json:"watch_id,omitempty"`
+	ParentID                   *string        `json:"parent_id,omitempty"`
+	Title                      string         `json:"title"`
+	Summary                    string         `json:"summary"`
+	ContentVersion             int64          `json:"content_version"`
+	TodoState                  string         `json:"todo_state"`
+	RemindAt                   *time.Time     `json:"remind_at,omitempty"`
+	AcknowledgedContentVersion int64          `json:"acknowledged_content_version"`
+	StateVersion               int64          `json:"state_version"`
 }
 
 type Run struct {
@@ -168,9 +174,12 @@ func selectWatches(ctx context.Context, tx *sql.Tx, input StartRun, now int64) (
 			watchIDs[index] = canonical
 		}
 	}
-	query := `SELECT w.id,w.revision,w.interest_id,i.revision,w.source,w.instructions_md,w.cursor,w.interval_seconds,w.lookback_seconds,w.next_due_at
-FROM watches w JOIN interests i ON i.id=w.interest_id WHERE w.state='active' AND i.state='active'`
-	args := []any{}
+	query := `SELECT w.id,w.revision,w.source_generation,w.matching_policy,w.source,w.instructions_md,w.cursor,w.interval_seconds,w.lookback_seconds,w.next_due_at
+FROM watches w WHERE w.state='active' AND (w.valid_until IS NULL OR w.valid_until>?) AND EXISTS (
+ SELECT 1 FROM interests i WHERE i.state='active' AND
+ (w.matching_policy='broad' OR EXISTS (SELECT 1 FROM watch_interests wi WHERE wi.watch_id=w.id AND wi.interest_id=i.id))
+)`
+	args := []any{now}
 	if input.WatchIDs.Set {
 		if len(watchIDs) == 0 {
 			return []SelectedWatch{}, 0, nil
@@ -197,7 +206,7 @@ FROM watches w JOIN interests i ON i.id=w.interest_id WHERE w.state='active' AND
 		return nil, 0, err
 	}
 	if input.WatchIDs.Set && eligible != len(watchIDs) {
-		return nil, 0, Invalid("Every selected Watch must exist, be active with an active Interest, and be due unless forced")
+		return nil, 0, Invalid("Every selected Watcher must be active, unexpired, have an applicable active Interest, and be due unless forced")
 	}
 	query += " ORDER BY w.next_due_at,w.id LIMIT 20"
 	rows, err := tx.QueryContext(ctx, query, args...)
@@ -211,7 +220,7 @@ FROM watches w JOIN interests i ON i.id=w.interest_id WHERE w.state='active' AND
 		var source string
 		var due int64
 		var nullable sql.NullString
-		if err = rows.Scan(&item.ID, &item.Revision, &item.InterestID, &item.InterestRevision, &source, &item.InstructionsMD, &nullable, &item.IntervalSeconds, &item.LookbackSeconds, &due); err != nil {
+		if err = rows.Scan(&item.ID, &item.Revision, &item.SourceGeneration, &item.MatchingPolicy, &source, &item.InstructionsMD, &nullable, &item.IntervalSeconds, &item.LookbackSeconds, &due); err != nil {
 			return nil, 0, err
 		}
 		if err = json.Unmarshal([]byte(source), &item.Source); err != nil {
@@ -230,6 +239,28 @@ FROM watches w JOIN interests i ON i.id=w.interest_id WHERE w.state='active' AND
 		return nil, 0, err
 	}
 	for index := range selected {
+		interestRows, interestErr := tx.QueryContext(ctx, `SELECT i.id,i.revision FROM interests i
+WHERE i.state='active' AND (?='broad' OR EXISTS (SELECT 1 FROM watch_interests wi WHERE wi.watch_id=? AND wi.interest_id=i.id))
+ORDER BY i.id`, selected[index].MatchingPolicy, selected[index].ID)
+		if interestErr != nil {
+			return nil, 0, interestErr
+		}
+		selected[index].Interests = []InterestMatch{}
+		for interestRows.Next() {
+			var match InterestMatch
+			if err = interestRows.Scan(&match.ID, &match.Revision); err != nil {
+				interestRows.Close()
+				return nil, 0, err
+			}
+			selected[index].Interests = append(selected[index].Interests, match)
+		}
+		if err = interestRows.Err(); err != nil {
+			interestRows.Close()
+			return nil, 0, err
+		}
+		if err = interestRows.Close(); err != nil {
+			return nil, 0, err
+		}
 		selected[index].RelatedItems = []AttentionItem{}
 		itemRows, itemErr := tx.QueryContext(ctx, `SELECT `+itemColumns+` FROM items WHERE watch_id=? ORDER BY content_updated_at DESC,id LIMIT 20`, selected[index].ID)
 		if itemErr != nil {
@@ -299,7 +330,7 @@ func activeInterests(ctx context.Context, db rowsQuerier) ([]Interest, error) {
 
 func attentionItems(ctx context.Context, db rowsQuerier, now int64) ([]AttentionItem, error) {
 	rows, err := db.QueryContext(ctx, `SELECT `+itemColumns+` FROM items
-WHERE todo_state='todo' OR acknowledged_content_version<content_version OR (remind_at IS NOT NULL AND remind_at<=?)
+WHERE (origin<>'agent' OR watch_id IS NOT NULL) AND (todo_state='todo' OR acknowledged_content_version<content_version OR (remind_at IS NOT NULL AND remind_at<=?))
 ORDER BY CASE WHEN remind_at IS NOT NULL AND remind_at<=? THEN 0 WHEN todo_state='todo' THEN 1 ELSE 2 END, COALESCE(remind_at,content_updated_at),content_updated_at DESC,id`, now, now)
 	if err != nil {
 		return nil, err
@@ -317,7 +348,7 @@ ORDER BY CASE WHEN remind_at IS NOT NULL AND remind_at<=? THEN 0 WHEN todo_state
 }
 
 func attentionItem(item Item) AttentionItem {
-	return AttentionItem{ID: item.ID, Kind: item.Kind, InterestID: item.InterestID, WatchID: item.WatchID, ParentID: item.ParentID, Title: item.Title, Summary: item.Summary, ContentVersion: item.ContentVersion, TodoState: item.TodoState, RemindAt: item.RemindAt, AcknowledgedContentVersion: item.AcknowledgedContentVersion, StateVersion: item.StateVersion}
+	return AttentionItem{ID: item.ID, Kind: item.Kind, Interests: item.Interests, WatchID: item.WatchID, ParentID: item.ParentID, Title: item.Title, Summary: item.Summary, ContentVersion: item.ContentVersion, TodoState: item.TodoState, RemindAt: item.RemindAt, AcknowledgedContentVersion: item.AcknowledgedContentVersion, StateVersion: item.StateVersion}
 }
 
 func contextSnapshot(ctx context.Context, db *sql.Tx, settings settingsRow, now int64) (runContextSnapshot, error) {
@@ -805,6 +836,7 @@ func (a *App) BriefPage(ctx context.Context, cursor string) (map[string]any, err
 type WatchHealth struct {
 	WatchID       string     `json:"watch_id"`
 	NextDueAt     time.Time  `json:"next_due_at"`
+	DueReason     string     `json:"due_reason"`
 	LastStatus    string     `json:"last_status,omitempty"`
 	LastAttemptAt *time.Time `json:"last_attempt_at,omitempty"`
 	LastSuccessAt *time.Time `json:"last_success_at,omitempty"`
@@ -849,12 +881,14 @@ func (a *App) OperationalHealth(ctx context.Context) (map[string]any, error) {
 			return nil, err
 		}
 	}
-	rows, err := a.Store.DB.QueryContext(ctx, `SELECT w.id,w.next_due_at,
+	rows, err := a.Store.DB.QueryContext(ctx, `SELECT w.id,w.next_due_at,w.state,w.valid_until,
+  (SELECT count(*) FROM interests i WHERE i.state='active' AND
+   (w.matching_policy='broad' OR EXISTS (SELECT 1 FROM watch_interests wi WHERE wi.watch_id=w.id AND wi.interest_id=i.id))),
   (SELECT status FROM watch_results wr WHERE wr.watch_id=w.id ORDER BY recorded_at DESC,run_id DESC LIMIT 1),
   (SELECT recorded_at FROM watch_results wr WHERE wr.watch_id=w.id ORDER BY recorded_at DESC,run_id DESC LIMIT 1),
   (SELECT MAX(recorded_at) FROM watch_results wr WHERE wr.watch_id=w.id AND status='success'),
   (SELECT json_extract(result,'$.error') FROM watch_results wr WHERE wr.watch_id=w.id ORDER BY recorded_at DESC,run_id DESC LIMIT 1)
-	 FROM watches w JOIN interests i ON i.id=w.interest_id WHERE w.state='active' AND i.state='active' ORDER BY w.id`)
+	 FROM watches w ORDER BY w.id`)
 	if err != nil {
 		return nil, err
 	}
@@ -865,13 +899,30 @@ func (a *App) OperationalHealth(ctx context.Context) (map[string]any, error) {
 	for rows.Next() {
 		var item WatchHealth
 		var nextDue int64
+		var state string
+		var validUntil sql.NullInt64
+		var interestCount int
 		var status, message sql.NullString
 		var attempt, success sql.NullInt64
-		if err = rows.Scan(&item.WatchID, &nextDue, &status, &attempt, &success, &message); err != nil {
+		if err = rows.Scan(&item.WatchID, &nextDue, &state, &validUntil, &interestCount, &status, &attempt, &success, &message); err != nil {
 			return nil, err
 		}
 		item.NextDueAt = time.UnixMilli(nextDue).UTC()
-		if !item.NextDueAt.After(now) {
+		switch {
+		case state != "active":
+			item.DueReason = "watcher_" + state
+		case validUntil.Valid && validUntil.Int64 <= now.UnixMilli():
+			item.DueReason = "expired"
+		case interestCount == 0:
+			item.DueReason = "no_active_interest"
+		case item.NextDueAt.After(now):
+			item.DueReason = "scheduled_later"
+		case status.String == "partial" || status.String == "failed":
+			item.DueReason = "retry_after_" + status.String
+		default:
+			item.DueReason = "scheduled"
+		}
+		if item.DueReason == "scheduled" || strings.HasPrefix(item.DueReason, "retry_after_") {
 			dueCount++
 		}
 		item.LastStatus, item.LastError = status.String, message.String

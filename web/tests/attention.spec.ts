@@ -1,5 +1,21 @@
 import { expect, test } from "@playwright/test";
 
+test("user can capture a date-only Item without a link",async({page})=>{
+  const marker=crypto.randomUUID().slice(0,8);
+  await page.goto("/library");
+  await page.getByRole("button",{name:"New Item"}).click();
+  const dialog=page.getByRole("dialog");
+  await dialog.getByRole("textbox",{name:"Title"}).fill(`User idea ${marker}`);
+  await dialog.getByRole("textbox",{name:"Summary"}).fill("Review this independently of source monitoring.");
+  await dialog.getByLabel("Source date (optional)").fill("2026-09-27");
+  await dialog.getByRole("button",{name:"Create"}).click();
+  await expect(dialog).toHaveCount(0);
+  await page.getByRole("button",{name:new RegExp(`User idea ${marker}`)}).click();
+  await page.getByRole("link",{name:/Full detail/}).click();
+  await expect(page.getByText("2026-09-27",{exact:true})).toBeVisible();
+  await expect(page.getByRole("link",{name:/Source date/})).toHaveCount(0);
+});
+
 test("a report survives Todo, reminder, reload, and Done", async ({
   page,
   request,
@@ -104,7 +120,7 @@ test("owner can inspect and abandon an interrupted run", async ({ page, request 
   expect(interestResponse.ok()).toBeTruthy();
   const interest = await interestResponse.json();
   const watchResponse = await request.post("/api/v1/watches", {
-    data: { interest_id: interest.id, source: { kind: "web", locator: `https://example.com/${marker}` }, instructions_md: "Inspect" },
+    data: { matching_policy:"explicit", interest_ids:[interest.id], source: { kind: "web", locator: `https://example.com/${marker}` }, instructions_md: "Inspect" },
   });
   expect(watchResponse.ok()).toBeTruthy();
   const started = await request.post("/api/v1/runs", { data: { runner_label: "e2e-agent" } });

@@ -166,6 +166,36 @@ func command() *cobra.Command {
 	config.AddCommand(&cobra.Command{Use: "set <timezone>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
 		return printResult(cmd, "PATCH", "/settings", app.SetSettings{RequestID: uuid.NewString(), Timezone: args[0]})
 	}})
+	var planFile, previewToken, planRequestID string
+	var dryRun bool
+	planCommand := &cobra.Command{Use: "plan", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		body, err := commandFile(cmd, planFile)
+		if err != nil {
+			return err
+		}
+		return printResult(cmd, "POST", "/config/plans/preview", body)
+	}}
+	planCommand.Flags().StringVar(&planFile, "file", "", "JSON change-set file")
+	_ = planCommand.MarkFlagRequired("file")
+	applyCommand := &cobra.Command{Use: "apply", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
+		body, err := commandFile(cmd, planFile)
+		if err != nil {
+			return err
+		}
+		if dryRun {
+			return printResult(cmd, "POST", "/config/plans/preview", body)
+		}
+		if previewToken == "" {
+			return fmt.Errorf("--preview-token is required; run config plan first")
+		}
+		return printResult(cmd, "POST", "/config/plans/apply", map[string]any{"request_id": planRequestID, "preview_token": previewToken, "plan": json.RawMessage(body)})
+	}}
+	applyCommand.Flags().StringVar(&planFile, "file", "", "JSON change-set file")
+	applyCommand.Flags().StringVar(&previewToken, "preview-token", "", "Token from the reviewed preview")
+	applyCommand.Flags().StringVar(&planRequestID, "request-id", "", "Idempotency key")
+	applyCommand.Flags().BoolVar(&dryRun, "dry-run", false, "Preview without applying")
+	_ = applyCommand.MarkFlagRequired("file")
+	config.AddCommand(planCommand, applyCommand)
 	root.AddCommand(config)
 	root.AddCommand(configurationCommand("interest", "/interests", printResult), configurationCommand("watch", "/watches", printResult))
 	root.AddCommand(itemCommand(printResult))

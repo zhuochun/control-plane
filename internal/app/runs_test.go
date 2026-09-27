@@ -27,7 +27,7 @@ func TestRunSelectionAndChangeAcknowledgement(t *testing.T) {
 	}
 	var interest Interest
 	_ = json.Unmarshal(raw, &interest)
-	raw, err = a.CreateWatch(ctx, CreateWatch{RequestID: "watch", InterestID: interest.ID, Source: WatchSource{Kind: "web", Locator: "https://example.com/releases"}, InstructionsMD: "Read release notes."})
+	raw, err = a.CreateWatch(ctx, CreateWatch{RequestID: "watch", InterestIDs: []string{interest.ID}, MatchingPolicy: "explicit", Source: WatchSource{Kind: "web", Locator: "https://example.com/releases"}, InstructionsMD: "Read release notes."})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -145,7 +145,7 @@ func TestAbandonRunPreservesSubmittedCoverageAndReleasesSlot(t *testing.T) {
 	}
 	watches := make([]Watch, 2)
 	for index := range watches {
-		raw, err = a.CreateWatch(ctx, CreateWatch{InterestID: interest.ID, Source: WatchSource{Kind: "web", Locator: fmt.Sprintf("https://example.com/%d", index)}})
+		raw, err = a.CreateWatch(ctx, CreateWatch{InterestIDs: []string{interest.ID}, MatchingPolicy: "explicit", Source: WatchSource{Kind: "web", Locator: fmt.Sprintf("https://example.com/%d", index)}})
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -265,14 +265,14 @@ func TestStartRunNormalizesInterestAndAttentionContext(t *testing.T) {
 	}
 	watched := createInterest("watched-interest", "Watched interest")
 	unwatched := createInterest("unwatched-interest", "Unwatched interest")
-	watchRaw, err := a.CreateWatch(ctx, CreateWatch{RequestID: "context-watch", InterestID: watched.ID, Source: WatchSource{Kind: "fixture", Locator: "context"}})
+	watchRaw, err := a.CreateWatch(ctx, CreateWatch{RequestID: "context-watch", InterestIDs: []string{watched.ID}, MatchingPolicy: "explicit", Source: WatchSource{Kind: "fixture", Locator: "context"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var watch Watch
 	_ = json.Unmarshal(watchRaw, &watch)
 	interestID := unwatched.ID
-	_, err = a.PutItem(ctx, "", PutItem{RequestID: "attention-context", DedupeKey: "attention:unwatched", ExpectedContentVersion: 0, Kind: "note", InterestID: &interestID, Title: "Unwatched attention", Summary: "This must still be visible to the heartbeat.", Sources: []Source{}, Report: Report{SchemaVersion: 1, BodyMD: "Review this local finding."}, InitialTodoState: "todo"})
+	_, err = a.PutItem(ctx, "", PutItem{RequestID: "attention-context", DedupeKey: "attention:unwatched", ExpectedContentVersion: 0, Kind: "note", Interests: []ItemInterest{{ID: interestID, Reason: "Local context"}}, Title: "Unwatched attention", Summary: "This must still be visible to the heartbeat.", Sources: []Source{}, Report: Report{SchemaVersion: 1, BodyMD: "Review this local finding."}, InitialTodoState: "todo"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -294,7 +294,7 @@ func TestStartRunNormalizesInterestAndAttentionContext(t *testing.T) {
 	if len(packet.Brief.Interests) != 2 || len(packet.Brief.Attention) != 1 || len(packet.Brief.Watches) != 1 || packet.Brief.Attention[0].Title != "Unwatched attention" {
 		t.Fatalf("normalized packet omitted context: %+v", packet.Brief)
 	}
-	if packet.Brief.Watches[0].InterestID != watched.ID || packet.Brief.Contexts["AGENTS.md"] == "" {
+	if len(packet.Brief.Watches[0].Interests) != 1 || packet.Brief.Watches[0].Interests[0].ID != watched.ID || packet.Brief.Contexts["AGENTS.md"] == "" {
 		t.Fatalf("watch/context normalization failed: %+v", packet.Brief)
 	}
 	if strings.Contains(string(raw), "interest_instructions_md") {

@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, TextField, useMediaQuery } from "@mui/material";
+import { Alert, Button, Dialog, DialogActions, DialogContent, DialogTitle, MenuItem, TextField, useMediaQuery } from "@mui/material";
 import { NavLink } from "react-router";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -9,7 +9,7 @@ import { type Item, parseMetric, ProposalCard, ReminderDialog, useItemAction } f
 import { formatDateTime, useSettings } from "./settings";
 
 type Interest = { id: string; title: string };
-type Proposal = { id: string; target_type: string; operation: string; rationale_md: string; state: string };
+type Proposal = { id: string; proposal_key:string; target_type: string; operation: string; rationale_md: string; state: string; evidence_links?:string[];confidence?:number;payload?:object };
 
 function stateOf(item: Item) {
   if (item.remind_at && new Date(item.remind_at) <= new Date()) return "Due";
@@ -27,6 +27,36 @@ function findingsExcerpt(item: Item) {
     .filter((line) => line.trim() && !line.startsWith("#") && !line.startsWith("|"))
     .join("\n");
   return withoutTablesAndCode.trim().slice(0, 650) || item.summary;
+}
+
+function NewItemDialog({close}:{close:()=>void}){
+  const cache=useQueryClient();
+  const identity=useRef(crypto.randomUUID());
+  const attempt=useRef<{signature:string;requestId:string}|null>(null);
+  const [kind,setKind]=useState("task");
+  const [title,setTitle]=useState("");
+  const [summary,setSummary]=useState("");
+  const [body,setBody]=useState("");
+  const [sourceDate,setSourceDate]=useState("");
+  const create=useMutation({mutationFn:()=>{
+    const signature=JSON.stringify({kind,title,summary,body,sourceDate});
+    if(attempt.current?.signature!==signature)attempt.current={signature,requestId:crypto.randomUUID()};
+    return api<Item>("/items",{
+    request_id:attempt.current.requestId,dedupe_key:`user:${identity.current}`,kind,title,summary,
+    sources:sourceDate?[{id:"user-date",label:"Source date",source_date:sourceDate}]:[],
+    report:{schema_version:1,body_md:body},
+  },"POST")},onSuccess:async()=>{await cache.invalidateQueries({queryKey:["items"]});close()}});
+  return <Dialog open onClose={close} fullWidth maxWidth="sm"><form onSubmit={(event)=>{event.preventDefault();create.mutate()}}>
+    <DialogTitle>New Item</DialogTitle><DialogContent><div className="editor-fields">
+      <p>Capture your own task or note. A source link is optional.</p>
+      <TextField select label="Kind" value={kind} onChange={(event)=>setKind(event.target.value)}>{["task","note","report","outcome"].map((value)=><MenuItem key={value} value={value}>{value}</MenuItem>)}</TextField>
+      <TextField required label="Title" value={title} onChange={(event)=>setTitle(event.target.value)}/>
+      <TextField required label="Summary" value={summary} onChange={(event)=>setSummary(event.target.value)}/>
+      <TextField multiline minRows={3} label="Details" value={body} onChange={(event)=>setBody(event.target.value)}/>
+      <TextField label="Source date (optional)" type="date" value={sourceDate} onChange={(event)=>setSourceDate(event.target.value)} slotProps={{inputLabel:{shrink:true}}}/>
+      {create.isError&&<Alert severity="error">{create.error.message}</Alert>}
+    </div></DialogContent><DialogActions><Button onClick={close}>Cancel</Button><Button type="submit" variant="contained" disabled={create.isPending}>Create</Button></DialogActions>
+  </form></Dialog>
 }
 
 function Trend({ item }: { item: Item }) {
@@ -95,7 +125,7 @@ function Inspector({ itemId, close }: { itemId: string; close: () => void }) {
           {item.report.schema_version === 1 ? <div className="inspector-markdown"><ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>{findingsExcerpt(item)}</ReactMarkdown></div> : <p>Report format unavailable. The summary and sources are still shown.</p>}
         </div>
         <div className="inspector-block"><h3>Sources</h3>
-          {item.sources.length ? item.sources.map((source) => <a key={source.id} href={source.url} target="_blank" rel="noopener noreferrer" className="inspector-source">{source.label || source.url} ↗<small>Observed {formatDateTime(source.observed_at, settings.data?.timezone)}</small></a>) : <p>No source attached.</p>}
+          {item.sources.length ? item.sources.map((source) => source.url ? <a key={source.id} href={source.url} target="_blank" rel="noopener noreferrer" className="inspector-source">{source.label || source.url} ↗{source.observed_at && <small>Observed {formatDateTime(source.observed_at, settings.data?.timezone)}</small>}</a> : <span key={source.id} className="inspector-source">{source.label || "Source date"} · {source.source_date}</span>) : <p>No source attached.</p>}
         </div>
         <div className="inspector-block"><h3>Actions</h3>
           <div className="inspector-actions">
@@ -125,6 +155,7 @@ export function ItemWorkspace({ mode }: { mode: "attention" | "library" | "todo"
   const [kind, setKind] = useState("");
   const [interest, setInterest] = useState("");
   const [selected, setSelected] = useState<string | null>(null);
+  const [newItem,setNewItem]=useState(false);
   const all = useQuery({ queryKey: ["items", "workspace", "all"], queryFn: () => collection<Item>("/items?view=all") });
   const attention = useQuery({ queryKey: ["items", "workspace", "attention"], queryFn: () => collection<Item>("/items?view=attention") });
   const interests = useQuery({ queryKey: ["interests"], queryFn: () => collection<Interest>("/interests") });
@@ -133,8 +164,8 @@ export function ItemWorkspace({ mode }: { mode: "attention" | "library" | "todo"
   const interestNames = new Map((interests.data ?? []).map((entry) => [entry.id, entry.title]));
   const candidates = mode === "attention" ? (all.data ?? []).filter((item) => attentionIds.has(item.id)) : mode === "todo" ? (all.data ?? []).filter((item) => item.todo_state === "todo") : all.data ?? [];
   const filtered = candidates.filter((item) =>
-    (!kind || item.kind === kind) && (!interest || item.interest_id === interest) &&
-    (!search.trim() || `${item.title} ${item.summary} ${interestNames.get(item.interest_id ?? "") ?? ""}`.toLowerCase().includes(search.trim().toLowerCase()))
+    (!kind || item.kind === kind) && (!interest || item.interests?.some((reason)=>reason.id===interest)) &&
+    (!search.trim() || `${item.title} ${item.summary} ${item.interests?.map((reason)=>interestNames.get(reason.id) ?? "").join(" ") ?? ""}`.toLowerCase().includes(search.trim().toLowerCase()))
   );
   const due = filtered.filter((item) => stateOf(item) === "Due");
   const rest = filtered.filter((item) => stateOf(item) !== "Due");
@@ -143,7 +174,7 @@ export function ItemWorkspace({ mode }: { mode: "attention" | "library" | "todo"
   return <div className={`item-workspace${activeId ? "" : " inspector-closed"}`}>
     <div className="workspace-list">
       <div className="workspace-toolbar">
-        <div className="workspace-title"><h1>{mode === "attention" ? "Attention" : mode === "todo" ? "Todos" : "All items"}</h1><span className="workspace-count">{filtered.length}</span></div>
+        <div className="workspace-title"><h1>{mode === "attention" ? "Attention" : mode === "todo" ? "Todos" : "All items"}</h1><span className="workspace-count">{filtered.length}</span><Button size="small" onClick={()=>setNewItem(true)}>New Item</Button></div>
         <div className="workspace-totals"><span>Due <strong>{due.length}</strong></span><span>New <strong>{filtered.filter((item) => stateOf(item) === "New").length}</strong></span></div>
       </div>
       <div className="workspace-filters">
@@ -161,7 +192,7 @@ export function ItemWorkspace({ mode }: { mode: "attention" | "library" | "todo"
           return <button className={`ledger-row${activeId === item.id ? " selected" : ""}`} key={item.id} onClick={() => setSelected(item.id)} aria-pressed={activeId === item.id}>
             <span className="ledger-name"><strong>{item.title}</strong><small>{item.summary}</small></span>
             <span className={`tag kind kind-${item.kind}`}>{item.kind}</span>
-            <span className="ledger-interest">{interestNames.get(item.interest_id ?? "") ?? "—"}</span>
+            <span className="ledger-interest">{item.interests?.map((reason)=>interestNames.get(reason.id) ?? reason.id).join(", ") || "—"}</span>
             <span className="ledger-value">{metric ? <><strong>{metric.current.display}</strong><small>{metric.target ? `target ${metric.target.display}` : ""}</small></> : "—"}</span>
             <Trend item={item} />
             <span className="ledger-updated">{formatDateTime(item.content_updated_at, settings.data?.timezone)}</span>
@@ -173,5 +204,6 @@ export function ItemWorkspace({ mode }: { mode: "attention" | "library" | "todo"
       {mode === "attention" && (proposals.data?.length ?? 0) > 0 && <section className="ledger-proposals"><h2>Proposals to review <span>{proposals.data?.length}</span></h2>{proposals.data?.map((proposal) => <ProposalCard key={proposal.id} proposal={proposal} />)}</section>}
     </div>
     {activeId && <Inspector key={activeId} itemId={activeId} close={() => setSelected("")} />}
+    {newItem&&<NewItemDialog close={()=>setNewItem(false)}/>}
   </div>;
 }

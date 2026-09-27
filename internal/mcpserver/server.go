@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"net/url"
 	"strconv"
+	"time"
 
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 	"github.com/zhuochun/control-plane/internal/app"
@@ -65,6 +66,23 @@ type proposalInput struct {
 	Operation        string         `json:"operation"`
 	Payload          map[string]any `json:"payload,omitempty"`
 	RationaleMD      string         `json:"rationale_md"`
+	EvidenceLinks    []string       `json:"evidence_links,omitempty"`
+	Confidence       *float64       `json:"confidence,omitempty"`
+	DuplicateOf      *string        `json:"duplicate_of,omitempty"`
+	ExpiresAt        *time.Time     `json:"expires_at,omitempty"`
+}
+type configRef struct {
+	Ref string `json:"ref"`
+}
+type configList struct {
+	State string `json:"state,omitempty"`
+}
+type configCreate struct {
+	Payload map[string]any `json:"payload"`
+}
+type configUpdate struct {
+	Ref     string         `json:"ref"`
+	Payload map[string]any `json:"payload"`
 }
 
 func (c Caller) call(ctx context.Context, method, path string, body any) (map[string]any, error) {
@@ -97,6 +115,29 @@ func respond(value map[string]any, err error) (*mcp.CallToolResult, map[string]a
 func New(serverURL, version string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "aicp", Version: version}, nil)
 	caller := Caller{Client: client.New(serverURL)}
+	for _, entity := range []struct{ name, path string }{{"interest", "/interests"}, {"watcher", "/watches"}} {
+		entity := entity
+		mcp.AddTool(server, &mcp.Tool{Name: "list_" + entity.name + "s", Description: "Read current " + entity.name + " configuration without starting a source Run."}, func(ctx context.Context, _ *mcp.CallToolRequest, input configList) (*mcp.CallToolResult, map[string]any, error) {
+			query := url.Values{}
+			if input.State != "" {
+				query.Set("state", input.State)
+			}
+			value, err := caller.call(ctx, http.MethodGet, entity.path+"?"+query.Encode(), nil)
+			return respond(value, err)
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "get_" + entity.name, Description: "Read one " + entity.name + " by slug or immutable ID, without starting a source Run."}, func(ctx context.Context, _ *mcp.CallToolRequest, input configRef) (*mcp.CallToolResult, map[string]any, error) {
+			value, err := caller.call(ctx, http.MethodGet, entity.path+"/"+url.PathEscape(input.Ref), nil)
+			return respond(value, err)
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "create_" + entity.name, Description: "Create a " + entity.name + " directly from a configuration payload; emits an auditable config event without claiming source work."}, func(ctx context.Context, _ *mcp.CallToolRequest, input configCreate) (*mcp.CallToolResult, map[string]any, error) {
+			value, err := caller.call(ctx, http.MethodPost, entity.path, input.Payload)
+			return respond(value, err)
+		})
+		mcp.AddTool(server, &mcp.Tool{Name: "update_" + entity.name, Description: "Update a " + entity.name + " directly. Payload must include expected_revision. Watcher interest_ids replace explicit links while retaining identity and cursor."}, func(ctx context.Context, _ *mcp.CallToolRequest, input configUpdate) (*mcp.CallToolResult, map[string]any, error) {
+			value, err := caller.call(ctx, http.MethodPatch, entity.path+"/"+url.PathEscape(input.Ref), input.Payload)
+			return respond(value, err)
+		})
+	}
 	mcp.AddTool(server, &mcp.Tool{Name: "get_brief", Description: "Preview aicp's active Interests, due Watches, unarchived Attention summaries, captured changes, contexts, and health. Read-only; follow continuation cursors until the requested collection is complete."}, func(ctx context.Context, _ *mcp.CallToolRequest, input briefInput) (*mcp.CallToolResult, map[string]any, error) {
 		path := "/brief"
 		if input.Cursor != "" {
@@ -163,7 +204,7 @@ func New(serverURL, version string) *mcp.Server {
 		if input.Payload != nil {
 			payload, _ = json.Marshal(input.Payload)
 		}
-		body := app.CreateProposal{RequestID: input.RequestID, ProposalKey: input.ProposalKey, TargetType: input.TargetType, TargetID: input.TargetID, ExpectedRevision: input.ExpectedRevision, Operation: input.Operation, Payload: payload, RationaleMD: input.RationaleMD}
+		body := app.CreateProposal{RequestID: input.RequestID, ProposalKey: input.ProposalKey, TargetType: input.TargetType, TargetID: input.TargetID, ExpectedRevision: input.ExpectedRevision, Operation: input.Operation, Payload: payload, RationaleMD: input.RationaleMD,EvidenceLinks:input.EvidenceLinks,Confidence:input.Confidence,DuplicateOf:input.DuplicateOf,ExpiresAt:input.ExpiresAt}
 		value, err := caller.call(ctx, http.MethodPost, "/proposals", body)
 		return respond(value, err)
 	})

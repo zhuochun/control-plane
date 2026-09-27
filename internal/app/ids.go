@@ -6,6 +6,22 @@ import (
 	"strings"
 )
 
+func validSlug(value string) bool {
+	if len(value) < 2 || len(value) > 80 || value[0] == '-' || value[len(value)-1] == '-' {
+		return false
+	}
+	for _, character := range value {
+		if (character < 'a' || character > 'z') && (character < '0' || character > '9') && character != '-' {
+			return false
+		}
+	}
+	return true
+}
+
+func defaultSlug(prefix, id string) string {
+	return prefix + "-" + strings.ReplaceAll(id, "-", "")[:12]
+}
+
 type rowsQuerier interface {
 	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
 }
@@ -17,6 +33,29 @@ func resolveID(ctx context.Context, db rowsQuerier, table, input string) (string
 	input = strings.TrimSpace(input)
 	if input == "" {
 		return "", Invalid("id is required")
+	}
+	if table == "interests" || table == "watches" {
+		var id string
+		rows, queryErr := db.QueryContext(ctx, "SELECT id FROM "+table+" WHERE slug=?", input)
+		if queryErr != nil {
+			return "", queryErr
+		}
+		if rows.Next() {
+			if scanErr := rows.Scan(&id); scanErr != nil {
+				rows.Close()
+				return "", scanErr
+			}
+		}
+		if rowErr := rows.Err(); rowErr != nil {
+			rows.Close()
+			return "", rowErr
+		}
+		if closeErr := rows.Close(); closeErr != nil {
+			return "", closeErr
+		}
+		if id != "" {
+			return id, nil
+		}
 	}
 	for _, character := range input {
 		if !(character >= '0' && character <= '9') && !(character >= 'a' && character <= 'f') && !(character >= 'A' && character <= 'F') && character != '-' {

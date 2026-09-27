@@ -14,25 +14,26 @@ scheduling stay outside aicp.
 The durable configuration and work relationships are:
 
 ```text
-Interest = why it matters
-    └── Watch = where and how to inspect it
-Agent run = one inspection attempt across up to 20 due Watches
-Item = a durable finding tied to an Interest, optionally to a Watch;
-       later runs can update the same Item
+Watcher = a bounded source input, cadence, and source checkpoint
+Interest = a relevance filter and interpretation rule
+Run = one inspection attempt across up to 20 due Watchers
+Item = one continuing matter, with Item-local source references,
+       an originating Watcher when source-derived, and Interest reasons
 ```
 
 An **Interest** is the durable purpose: a title, free-form instructions, and
-an `active`, `paused`, or `deprecated` lifecycle state. A **Watch** attaches a
-primary source to an Interest and describes its locator, inspection
-instructions, interval, lookback window, and lifecycle state. Several Watches
-can share one Interest.
+an `active`, `paused`, or `deprecated` lifecycle state. A **Watcher** owns a
+bounded source, inspection cadence, optional validity end, and checkpoint.
+Broad Watchers assess all active Interests; explicit Watchers assess only their
+linked Interests. Changing links preserves Watcher identity and checkpoint.
 
-An **Item** is retained work or knowledge produced by a run. Its kind is
+An **Item** is retained work or knowledge. Its kind is
 `note`, `report`, `task`, or `outcome`; all kinds can contain Markdown content,
 source references, context, Todo state, reminders, acknowledgement state, and
-user notes. A **Proposal** is an agent-suggested creation, update, or
-deprecation of one Interest or Watch. Proposals are reviewed by a person and
-do not change configuration automatically.
+user notes. A user-created Item can have no source or a source date without a
+link. Agent-published source findings cite a Watcher, source reference, and
+one or more Interest reasons. A **Proposal** is an agent-suggested configuration
+change for review; it does not change configuration automatically.
 
 ## Build and run
 
@@ -55,16 +56,20 @@ database and defaults; ordinary commands call the running server.
 ```powershell
 .\dist\aicp.exe doctor
 .\dist\aicp.exe config set Asia/Singapore
-.\dist\aicp.exe interest create --file interest.json --json
-.\dist\aicp.exe watch create --file watch.json --json
+.\dist\aicp.exe interest create --slug delivery-risk --title "Delivery risk" --instructions-file interest.md
+.\dist\aicp.exe watcher create --slug gmail-inbox --source-kind gmail --source-locator inbox --matching-policy broad
+.\dist\aicp.exe watcher update gmail-inbox --revision 1 --matching-policy explicit --interest delivery-risk
+.\dist\aicp.exe config plan --file focus.json
+.\dist\aicp.exe config apply --file focus.json --preview-token "TOKEN_FROM_PLAN"
 .\dist\aicp.exe brief --json
 .\dist\aicp.exe run start
 .\dist\aicp.exe run submit <watch-id> --file findings.json
 .\dist\aicp.exe run finish --summary "Inspected selected Watches"
 ```
 
-Configuration and complex finding/item payload files are ordinary JSON. The
-normal run start and finish commands need no files. Use `aicp <command> --help`
+Simple configuration commands accept flags. Grouped configuration plans and
+complex finding/item payloads use JSON files. Configuration never starts a
+source Run. The normal run start and finish commands need no files. Use `aicp <command> --help`
 for the accepted shape. Descriptive instructions and reports remain free-form
 Markdown; JSON fields cover only identity, revisions, scheduling, source
 references, and user actions needed for safe operation.
@@ -93,30 +98,32 @@ inspect sources:
 1. Call `start_run`. aicp returns each active Interest once, bounded pages of
    unarchived Attention summaries, due Watch snapshots, contexts, and the
    captured change range.
-2. Consume all continuation cursors, then inspect only the selected Watches
+2. Consume all continuation cursors, then inspect only the selected Watchers
    with the agent's Slack, browser, GitHub, Drive, or other tools. aicp never
    receives source credentials or fetches those systems.
-3. Call `submit_watch_findings` once per selected Watch. The result records
+3. Call `submit_watch_findings` once per selected Watcher. The result records
    coverage, limitations, the next cursor, and zero or more Item upserts. If a
-   finding is relevant to an Interest but not a selected Watch, use
-   `upsert_item` without a Watch. Stable dedupe keys and expected content
-   versions let the agent update findings instead of creating duplicates.
-4. Call `finish_run` only after every selected Watch has a terminal result.
-   Successful coverage advances the Watch checkpoint and next due time; failed
+   Item names the captured Interest reasons and concrete source references.
+   `upsert_item` can retain an Interest-level agent note without Watcher
+   coverage; such a note does not enter Attention. Stable dedupe keys and
+   expected content versions let the agent update findings instead of
+   creating duplicates.
+4. Call `finish_run` only after every selected Watcher has a terminal result.
+   Successful coverage advances the Watcher checkpoint and next due time; failed
    or partial coverage remains eligible for a later run.
    If the external agent cannot finish, review the active run in Activity and
    explicitly abandon it with a reason. Submitted findings and successful
-   checkpoints remain; unreported Watches stay due and captured changes replay.
+   checkpoints remain; unreported Watchers stay due and captured changes replay.
 5. Review the resulting Attention items. You can open sources, acknowledge
    findings, set Todo or Done, add reminders, and accept or reject proposals.
    The next run receives those local changes as context.
 
 The server does not promise that an inspection is running merely because a
-Watch exists. Until an external runner connects, the portal reports that no
+Watcher exists. Until an external runner connects, the portal reports that no
 agent run has been received.
-Monitoring shows each active Watch's latest inspection and next due time;
-Activity shows the active run and the number of due Watches. Due work beyond
-the 20-Watch run limit remains visible for a later heartbeat.
+Monitoring shows each Watcher's latest inspection and due reason; Activity
+shows the active run and the number of due Watchers. Due work beyond the
+20-Watcher run limit remains visible for a later heartbeat.
 
 ## Demo and verification
 
@@ -172,6 +179,7 @@ Windows and Linux. macOS archives are cross-compiled until a native macOS runner
 is added. Generated assets, databases, credentials, and archives are ignored by
 Git.
 
-The specifications are in [`docs/specs`](docs/specs). The deterministic fixture
-demo verifies the local application path; it does not claim live Slack, Drive,
-or other connector access.
+The current vocabulary is in [`docs/glossary.md`](docs/glossary.md), with the
+behavioral contract in the [Watcher–Interest model specification](docs/specs/20260924-watcher-interest-model-spec.md).
+The deterministic fixture demo verifies the current local application path; it
+does not claim live Slack, Drive, or other connector access.
