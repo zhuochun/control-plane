@@ -31,8 +31,8 @@ export function Preferences() {
       api<Settings>("/settings", {
         request_id: crypto.randomUUID(),
         timezone,
-        agents_md: agentsMD,
-        user_md: userMD,
+        ...(agentsMD !== settings.data?.agents_md ? { agents_md: agentsMD } : {}),
+        ...(userMD !== settings.data?.user_md ? { user_md: userMD } : {}),
       }),
     onSuccess: (result) => {
       cache.setQueryData(["settings"], result);
@@ -44,6 +44,13 @@ export function Preferences() {
 
   const browserZone = browserTimezone();
   const displayZone = effectiveTimezone(timezone);
+  const agentsBytes = new TextEncoder().encode(agentsMD).length;
+  const userBytes = new TextEncoder().encode(userMD).length;
+  const agentsOverLimit = agentsBytes > (settings.data?.agents_md_max_bytes ?? 8192);
+  const userOverLimit = userBytes > (settings.data?.user_md_max_bytes ?? 16384);
+  const changedContextOverLimit =
+    (agentsMD !== settings.data?.agents_md && agentsOverLimit) ||
+    (userMD !== settings.data?.user_md && userOverLimit);
 
   return (
     <>
@@ -129,6 +136,8 @@ export function Preferences() {
               minRows={9}
               label="Agent instructions"
               value={agentsMD}
+              error={agentsOverLimit}
+              helperText={`${agentsBytes} / ${settings.data?.agents_md_max_bytes ?? 8192} bytes. Keep reusable guidance concise.`}
               onChange={(event) => {
                 setAgentsMD(event.target.value);
                 save.reset();
@@ -169,6 +178,8 @@ export function Preferences() {
               minRows={9}
               label="Owner context"
               value={userMD}
+              error={userOverLimit}
+              helperText={`${userBytes} / ${settings.data?.user_md_max_bytes ?? 16384} bytes. Include only durable owner context.`}
               onChange={(event) => {
                 setUserMD(event.target.value);
                 save.reset();
@@ -199,7 +210,7 @@ export function Preferences() {
           <Button
             type="submit"
             variant="contained"
-            disabled={save.isPending || !settings.data}
+            disabled={save.isPending || !settings.data || changedContextOverLimit}
           >
             {save.isPending ? "Saving…" : "Save preferences"}
           </Button>

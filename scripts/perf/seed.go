@@ -55,12 +55,20 @@ func fixtureHash(input app.PutItem) string {
 
 func main() {
 	var directory, name string
+	var attentionPercent int
 	flag.StringVar(&directory, "data-dir", "", "new isolated data directory")
 	flag.StringVar(&name, "profile", "mature", "fresh, mature, large, or skewed")
+	flag.IntVar(&attentionPercent, "attention-percent", -1, "override percentage of Items in Attention (0-100)")
 	flag.Parse()
 	p, ok := profiles[name]
 	if !ok || directory == "" {
 		panic("provide -data-dir and a known -profile")
+	}
+	if attentionPercent != -1 {
+		if attentionPercent < 0 || attentionPercent > 100 {
+			panic("attention-percent must be between 0 and 100")
+		}
+		p.attentionPercent = attentionPercent
 	}
 	absolute, err := filepath.Abs(directory)
 	must(err)
@@ -230,7 +238,7 @@ func main() {
 	if unchanged.ContentVersion != sampleInput.ExpectedContentVersion {
 		panic("fixture content hash changed a no-op Item")
 	}
-	manifest, _ := json.MarshalIndent(map[string]any{"profile": name, "items": p.items, "versions": versions, "runs": p.runs, "interests": p.interests, "watches": p.watches, "attention_percent": p.attentionPercent, "fixture_version": 3}, "", "  ")
+	manifest, _ := json.MarshalIndent(map[string]any{"profile": name, "items": p.items, "versions": versions, "runs": p.runs, "interests": p.interests, "watches": p.watches, "attention_percent": p.attentionPercent, "fixture_version": 4}, "", "  ")
 	must(os.WriteFile(filepath.Join(absolute, "perf-manifest.json"), append(manifest, '\n'), 0600))
 	fmt.Printf("%s\n", manifest)
 }

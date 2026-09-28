@@ -214,6 +214,10 @@ test("preferences keep browser defaults and expose agent context", async ({
   );
   await expect(page.getByLabel("Owner context")).toHaveValue(/Owner context/);
 
+  await page.getByLabel("Agent instructions").fill("a".repeat(8193));
+  await expect(page.getByRole("button", { name: "Save preferences" })).toBeDisabled();
+  await expect(page.getByText("8193 / 8192 bytes.", { exact: false })).toBeVisible();
+
   await page
     .getByLabel("Agent instructions")
     .fill("# Agent rules\n\nRead the brief first.");

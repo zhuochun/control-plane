@@ -7,6 +7,8 @@ export type Settings = {
   user_md: string;
   default_agents_md: string;
   default_user_md: string;
+  agents_md_max_bytes: number;
+  user_md_max_bytes: number;
 };
 
 export function browserTimezone(): string {

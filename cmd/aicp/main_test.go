@@ -59,3 +59,26 @@ func TestUserContextCommandSendsApprovedFile(t *testing.T) {
 		t.Fatalf("unexpected context request: %s %s %s", method, path, body)
 	}
 }
+
+func TestBriefCommandPassesContinuationCursor(t *testing.T) {
+	const cursor = "a+b/=="
+	var received string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodGet || r.URL.Path != "/api/v1/brief" {
+			t.Errorf("unexpected request: %s %s", r.Method, r.URL.Path)
+		}
+		received = r.URL.Query().Get("cursor")
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"collection":"attention_items","items":[],"next_cursor":null}`))
+	}))
+	defer server.Close()
+	cmd := command()
+	cmd.SetArgs([]string{"--server", server.URL, "--json", "brief", "--cursor", cursor})
+	cmd.SetOut(io.Discard)
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if received != cursor {
+		t.Fatalf("cursor = %q, want %q", received, cursor)
+	}
+}
