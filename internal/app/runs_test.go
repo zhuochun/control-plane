@@ -57,6 +57,50 @@ func TestRunsPageMatchesFullHistory(t *testing.T) {
 	}
 }
 
+func TestRunDetailProjectsRelatedItemsWithoutChangingCapture(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	fullSummary := strings.Repeat("Full related Item summary. ", 30)
+	selected, err := json.Marshal([]SelectedWatch{{ID: "watch", RelatedItems: []CapturedAttentionItem{{ID: "item", Title: "Related", Summary: fullSummary}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DB.ExecContext(ctx, `INSERT INTO runs(id,runner_label,status,started_at,ended_at,lease_expires_at,selected_watches,after_seq,through_seq,context_snapshot) VALUES('abcd1234','fixture','completed',1,2,0,?,0,0,'{}')`, string(selected)); err != nil {
+		t.Fatal(err)
+	}
+	detail, err := New(s).RunDetail(ctx, "abcd1234")
+	if err != nil {
+		t.Fatal(err)
+	}
+	encoded, err := json.Marshal(detail)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var response struct {
+		SelectedWatches []struct {
+			RelatedItems []AttentionItem `json:"related_items"`
+		} `json:"selected_watches"`
+	}
+	if err = json.Unmarshal(encoded, &response); err != nil {
+		t.Fatal(err)
+	}
+	if len(response.SelectedWatches) != 1 || len(response.SelectedWatches[0].RelatedItems) != 1 {
+		t.Fatalf("missing related Item in Run detail: %s", encoded)
+	}
+	item := response.SelectedWatches[0].RelatedItems[0]
+	var captured string
+	if err = s.DB.QueryRowContext(ctx, `SELECT selected_watches FROM runs WHERE id='abcd1234'`).Scan(&captured); err != nil {
+		t.Fatal(err)
+	}
+	if len(item.Summary) > attentionSummaryMaxBytes || !slices.Contains(item.TruncatedFields, "summary") || !strings.Contains(captured, fullSummary) || strings.Contains(captured, "truncated_fields") {
+		t.Fatalf("Run detail or capture lost its intended shape: %s", encoded)
+	}
+}
+
 func TestRunSelectionAndChangeAcknowledgement(t *testing.T) {
 	ctx := context.Background()
 	s, err := store.Open(ctx, t.TempDir())
@@ -430,16 +474,16 @@ func TestRunContextContinuationReturnsRemainingInterests(t *testing.T) {
 }
 
 func TestContextContinuationPageUsesItemAndByteBounds(t *testing.T) {
-	items := make([]AttentionItem, contextPageSize+contextContinuationPageSize+1)
+	items := make([]CapturedAttentionItem, contextPageSize+contextContinuationPageSize+1)
 	for index := range items {
-		items[index] = AttentionItem{ID: fmt.Sprint(index), Title: "Item", Summary: "Short summary"}
+		items[index] = CapturedAttentionItem{ID: fmt.Sprint(index), Title: "Item", Summary: "Short summary"}
 	}
 	first, err := contextPage("run", "attention_items", items, 0, contextPageSize)
-	if err != nil || len(first["items"].([]AttentionItem)) != contextPageSize {
+	if err != nil || len(first["items"].([]CapturedAttentionItem)) != contextPageSize {
 		t.Fatalf("first page size: %#v %v", first, err)
 	}
 	continuation, err := contextPage("run", "attention_items", items, contextPageSize, contextContinuationPageSize)
-	if err != nil || len(continuation["items"].([]AttentionItem)) != contextContinuationPageSize || continuation["next_cursor"] == nil {
+	if err != nil || len(continuation["items"].([]CapturedAttentionItem)) != contextContinuationPageSize || continuation["next_cursor"] == nil {
 		t.Fatalf("continuation page size: %#v %v", continuation, err)
 	}
 	for index := range items {
