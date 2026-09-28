@@ -100,8 +100,7 @@ reported separately from the compact Run packet.
 The first packet keeps a 50-entry limit. Captured Interest and Attention
 continuations allow up to 150 entries with a 64 KiB item-array target; a single
 oversized entry is still returned so paging can progress. Attention entries
-omit the user-state version, replace the acknowledgement version with
-`unacknowledged`, and cap title, summary, and Interest reason text
+omit user-state and acknowledgement versions, and cap title, summary, and Interest reason text
 at 256, 512, and 256 UTF-8 bytes. `truncated_fields` marks entries that need a
 full `get_item` read when their omitted text matters. The source Item remains
-unchanged.
+unchanged, and the captured Run snapshot and retry receipt retain full text.

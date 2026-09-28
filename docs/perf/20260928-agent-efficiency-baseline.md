@@ -141,3 +141,16 @@ continuations yielded 246,171 reference tokens. A populated version 5 upgrade
 test verifies that captured Run, selected Watch, and retry receipt Attention
 entries use the current projection, while the Run status and owner context stay
 intact.
+
+Before release, the version 6 migration and Run capture were corrected to
+retain full text in snapshots and retry receipts. Caps now apply when responses
+are rendered. The Run summary also omits `unacknowledged`; acknowledgement
+actions remain available in the captured change range. The earlier figures
+remain historical measurements of the previous projection.
+
+The corrected Mature 20% quiet rerun consumed all 2,000 Attention summaries in
+18 MCP calls and 13 continuation pages. It yielded 229,650 structured and
+243,006 text reference tokens. The matched CLI backlog Run start and Attention
+continuations used 232,238 `--json` or 221,642 default-output reference tokens.
+All six MCP and two CLI deterministic cases passed. These single runs do not
+establish a latency distribution or measure billed model usage.

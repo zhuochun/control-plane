@@ -79,7 +79,7 @@ func TestAttentionSnapshotMigrationFromVersion5(t *testing.T) {
 		t.Fatalf("run state changed: %s %s", status, savedContext)
 	}
 	for _, raw := range []string{savedContext, savedWatches} {
-		if strings.Contains(raw, "acknowledged_content_version") || strings.Contains(raw, "state_version") {
+		if strings.Contains(raw, "acknowledged_content_version") || strings.Contains(raw, "state_version") || strings.Contains(raw, "unacknowledged") {
 			t.Fatalf("legacy response fields remain: %s", raw)
 		}
 	}
@@ -89,28 +89,27 @@ func TestAttentionSnapshotMigrationFromVersion5(t *testing.T) {
 			Interests      []struct {
 				Reason string `json:"reason"`
 			} `json:"interests"`
-			Unacknowledged  bool     `json:"unacknowledged"`
 			TruncatedFields []string `json:"truncated_fields"`
 		} `json:"attention_items"`
 	}
 	if err = json.Unmarshal([]byte(savedContext), &snapshot); err != nil {
 		t.Fatal(err)
 	}
-	if len(snapshot.Attention) != 2 || !snapshot.Attention[0].Unacknowledged || snapshot.Attention[1].Unacknowledged || len(snapshot.Attention[1].TruncatedFields) != 0 {
-		t.Fatalf("acknowledgement conversion: %+v", snapshot.Attention)
+	if len(snapshot.Attention) != 2 || len(snapshot.Attention[1].TruncatedFields) != 0 {
+		t.Fatalf("attention conversion: %+v", snapshot.Attention)
 	}
 	first := snapshot.Attention[0]
-	if len(first.Title) > 256 || len(first.Summary) > 512 || len(first.Interests[0].Reason) > 256 || !utf8.ValidString(first.Title+first.Summary+first.Interests[0].Reason) || strings.Join(first.TruncatedFields, ",") != "title,summary,interest_reason" {
-		t.Fatalf("text conversion: %+v", first)
+	if first.Title != oldItem["title"] || first.Summary != oldItem["summary"] || first.Interests[0].Reason != oldItem["interests"].([]any)[0].(map[string]any)["reason"] || !utf8.ValidString(first.Title+first.Summary+first.Interests[0].Reason) || len(first.TruncatedFields) != 0 || strings.Contains(savedContext, "truncated_fields") {
+		t.Fatalf("full text was not preserved: %+v", first)
 	}
-	if !strings.Contains(savedWatches, `"unacknowledged":true`) || !strings.Contains(savedWatches, `"truncated_fields"`) {
+	if strings.Contains(savedWatches, "unacknowledged") || strings.Contains(savedWatches, `"truncated_fields"`) || !strings.Contains(savedWatches, oldItem["summary"].(string)) {
 		t.Fatalf("selected Watch was not converted: %s", savedWatches)
 	}
 	var savedReceipt string
 	if err = opened.DB.QueryRowContext(ctx, `SELECT response FROM command_receipts WHERE request_id='start-r-1'`).Scan(&savedReceipt); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(savedReceipt, "acknowledged_content_version") || strings.Contains(savedReceipt, "state_version") || strings.Count(savedReceipt, `"unacknowledged":true`) != 2 {
+	if strings.Contains(savedReceipt, "acknowledged_content_version") || strings.Contains(savedReceipt, "state_version") || strings.Contains(savedReceipt, "truncated_fields") || strings.Contains(savedReceipt, "unacknowledged") || !strings.Contains(savedReceipt, oldItem["summary"].(string)) {
 		t.Fatalf("start Run retry receipt was not converted: %s", savedReceipt)
 	}
 }
