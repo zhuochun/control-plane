@@ -35,7 +35,8 @@ func TestAttentionSnapshotMigrationFromVersion5(t *testing.T) {
 		"id": "item-1", "kind": "report", "title": strings.Repeat("界", 100),
 		"summary": strings.Repeat("🙂", 200), "content_version": 2,
 		"acknowledged_content_version": 1, "state_version": 7, "todo_state": "todo",
-		"interests": []any{map[string]any{"id": "i-1", "reason": strings.Repeat("é", 150)}},
+		"truncated_fields": []string{"summary"},
+		"interests":        []any{map[string]any{"id": "i-1", "reason": strings.Repeat("é", 150)}},
 	}
 	acknowledgedItem := map[string]any{
 		"id": "item-2", "kind": "report", "title": "Short", "summary": "Short",

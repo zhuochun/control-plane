@@ -22,18 +22,18 @@ const attentionSummaryMaxBytes = 512
 const attentionReasonMaxBytes = 256
 
 type SelectedWatch struct {
-	ID               string          `json:"id"`
-	Revision         int64           `json:"revision"`
-	SourceGeneration int64           `json:"source_generation"`
-	MatchingPolicy   string          `json:"matching_policy"`
-	Interests        []InterestMatch `json:"interests"`
-	Source           WatchSource     `json:"source"`
-	InstructionsMD   string          `json:"instructions_md"`
-	Cursor           json.RawMessage `json:"cursor"`
-	IntervalSeconds  int64           `json:"interval_seconds"`
-	LookbackSeconds  int64           `json:"lookback_seconds"`
-	NextDueAt        time.Time       `json:"next_due_at"`
-	RelatedItems     []AttentionItem `json:"related_items"`
+	ID               string                  `json:"id"`
+	Revision         int64                   `json:"revision"`
+	SourceGeneration int64                   `json:"source_generation"`
+	MatchingPolicy   string                  `json:"matching_policy"`
+	Interests        []InterestMatch         `json:"interests"`
+	Source           WatchSource             `json:"source"`
+	InstructionsMD   string                  `json:"instructions_md"`
+	Cursor           json.RawMessage         `json:"cursor"`
+	IntervalSeconds  int64                   `json:"interval_seconds"`
+	LookbackSeconds  int64                   `json:"lookback_seconds"`
+	NextDueAt        time.Time               `json:"next_due_at"`
+	RelatedItems     []CapturedAttentionItem `json:"related_items"`
 }
 
 type InterestMatch struct {
@@ -41,18 +41,29 @@ type InterestMatch struct {
 	Revision int64  `json:"revision"`
 }
 
+// CapturedAttentionItem is the full Item context recorded at Run start.
+// Response-only indicators and text limits do not belong in this shape.
+type CapturedAttentionItem struct {
+	ID             string         `json:"id"`
+	Kind           string         `json:"kind"`
+	Interests      []ItemInterest `json:"interests"`
+	WatchID        *string        `json:"watch_id,omitempty"`
+	ParentID       *string        `json:"parent_id,omitempty"`
+	Title          string         `json:"title"`
+	Summary        string         `json:"summary"`
+	ContentVersion int64          `json:"content_version"`
+	TodoState      string         `json:"todo_state"`
+	RemindAt       *time.Time     `json:"remind_at,omitempty"`
+}
+
 type AttentionItem struct {
-	ID              string         `json:"id"`
-	Kind            string         `json:"kind"`
-	Interests       []ItemInterest `json:"interests"`
-	WatchID         *string        `json:"watch_id,omitempty"`
-	ParentID        *string        `json:"parent_id,omitempty"`
-	Title           string         `json:"title"`
-	Summary         string         `json:"summary"`
-	ContentVersion  int64          `json:"content_version"`
-	TodoState       string         `json:"todo_state"`
-	RemindAt        *time.Time     `json:"remind_at,omitempty"`
-	TruncatedFields []string       `json:"truncated_fields,omitempty"`
+	CapturedAttentionItem
+	TruncatedFields []string `json:"truncated_fields,omitempty"`
+}
+
+type SelectedWatchOutput struct {
+	SelectedWatch
+	RelatedItems []AttentionItem `json:"related_items"`
 }
 
 type Run struct {
@@ -72,7 +83,7 @@ type Run struct {
 // and run browsing without changing the authoritative run response.
 type RunSummary struct {
 	Run
-	SelectedWatches []SelectedWatch `json:"selected_watches"`
+	SelectedWatches []SelectedWatchOutput `json:"selected_watches"`
 }
 
 type StartRun struct {
@@ -307,7 +318,7 @@ ORDER BY i.id`, selected[index].MatchingPolicy, selected[index].ID)
 		if err = interestRows.Close(); err != nil {
 			return nil, 0, err
 		}
-		selected[index].RelatedItems = []AttentionItem{}
+		selected[index].RelatedItems = []CapturedAttentionItem{}
 		itemRows, itemErr := tx.QueryContext(ctx, `SELECT `+itemColumns+` FROM items WHERE watch_id=? ORDER BY content_updated_at DESC,id LIMIT 20`, selected[index].ID)
 		if itemErr != nil {
 			return nil, 0, itemErr
@@ -329,9 +340,9 @@ ORDER BY i.id`, selected[index].MatchingPolicy, selected[index].ID)
 }
 
 type runContextSnapshot struct {
-	Interests []Interest        `json:"interests"`
-	Attention []AttentionItem   `json:"attention_items"`
-	Contexts  map[string]string `json:"contexts"`
+	Interests []Interest              `json:"interests"`
+	Attention []CapturedAttentionItem `json:"attention_items"`
+	Contexts  map[string]string       `json:"contexts"`
 }
 
 type contextCursor struct {
@@ -374,15 +385,13 @@ func activeInterests(ctx context.Context, db rowsQuerier) ([]Interest, error) {
 	return items, rows.Err()
 }
 
-func attentionItems(ctx context.Context, db rowsQuerier, now int64) ([]AttentionItem, error) {
-	rows, err := db.QueryContext(ctx, `SELECT `+itemColumns+` FROM items
-WHERE (origin<>'agent' OR watch_id IS NOT NULL) AND (todo_state='todo' OR acknowledged_content_version<content_version OR (remind_at IS NOT NULL AND remind_at<=?))
-ORDER BY CASE WHEN remind_at IS NOT NULL AND remind_at<=? THEN 0 WHEN todo_state='todo' THEN 1 ELSE 2 END, COALESCE(remind_at,content_updated_at),content_updated_at DESC,id`, now, now)
+func attentionItems(ctx context.Context, db rowsQuerier, now int64) ([]CapturedAttentionItem, error) {
+	rows, err := db.QueryContext(ctx, "SELECT "+itemColumns+" FROM items WHERE "+attentionPredicate+itemOrder, now, now)
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
-	items := []AttentionItem{}
+	items := []CapturedAttentionItem{}
 	for rows.Next() {
 		item, err := scanItem(rows)
 		if err != nil {
@@ -393,11 +402,12 @@ ORDER BY CASE WHEN remind_at IS NOT NULL AND remind_at<=? THEN 0 WHEN todo_state
 	return items, rows.Err()
 }
 
-func attentionItem(item Item) AttentionItem {
-	return AttentionItem{ID: item.ID, Kind: item.Kind, Interests: item.Interests, WatchID: item.WatchID, ParentID: item.ParentID, Title: item.Title, Summary: item.Summary, ContentVersion: item.ContentVersion, TodoState: item.TodoState, RemindAt: item.RemindAt}
+func attentionItem(item Item) CapturedAttentionItem {
+	return CapturedAttentionItem{ID: item.ID, Kind: item.Kind, Interests: item.Interests, WatchID: item.WatchID, ParentID: item.ParentID, Title: item.Title, Summary: item.Summary, ContentVersion: item.ContentVersion, TodoState: item.TodoState, RemindAt: item.RemindAt}
 }
 
-func compactAttentionItem(item AttentionItem) AttentionItem {
+func compactAttentionItem(captured CapturedAttentionItem) AttentionItem {
+	item := AttentionItem{CapturedAttentionItem: captured}
 	var titleTruncated, summaryTruncated bool
 	item.Title, titleTruncated = compactContextText(item.Title, attentionTitleMaxBytes)
 	item.Summary, summaryTruncated = compactContextText(item.Summary, attentionSummaryMaxBytes)
@@ -451,20 +461,17 @@ func contextSnapshot(ctx context.Context, db *sql.Tx, settings settingsRow, now 
 }
 
 func contextPage[T any](runID, collection string, items []T, offset, pageSize int) (map[string]any, error) {
-	return contextPageProjected(runID, collection, items, offset, pageSize, nil)
+	return contextPageProjected(runID, collection, items, offset, pageSize, func(item T) T { return item })
 }
 
-func contextPageProjected[T any](runID, collection string, items []T, offset, pageSize int, project func(T) T) (map[string]any, error) {
+func contextPageProjected[T, U any](runID, collection string, items []T, offset, pageSize int, project func(T) U) (map[string]any, error) {
 	if offset < 0 || offset > len(items) {
 		return nil, Invalid("Continuation cursor is not in this collection")
 	}
 	end := min(offset+pageSize, len(items))
-	pageItems := items[offset:end]
-	if project != nil {
-		pageItems = make([]T, end-offset)
-		for index := range pageItems {
-			pageItems[index] = project(items[offset+index])
-		}
+	pageItems := make([]U, end-offset)
+	for index := range pageItems {
+		pageItems[index] = project(items[offset+index])
 	}
 	if end > offset+1 {
 		encoded, err := json.Marshal(pageItems)
@@ -532,10 +539,10 @@ func firstStoredContextPages(snapshot runContextSnapshot, runID string) (map[str
 	return brief, nil
 }
 
-func compactSelectedWatches(watches []SelectedWatch) []SelectedWatch {
-	output := make([]SelectedWatch, len(watches))
+func compactSelectedWatches(watches []SelectedWatch) []SelectedWatchOutput {
+	output := make([]SelectedWatchOutput, len(watches))
 	for index, watch := range watches {
-		output[index] = watch
+		output[index] = SelectedWatchOutput{SelectedWatch: watch}
 		if watch.RelatedItems == nil {
 			continue
 		}
@@ -556,14 +563,15 @@ func compactStartRunResponse(raw json.RawMessage) (json.RawMessage, error) {
 	if err := json.Unmarshal(response["brief"], &brief); err != nil {
 		return nil, err
 	}
-	var attention []AttentionItem
+	var attention []CapturedAttentionItem
 	if err := json.Unmarshal(brief["attention_items"], &attention); err != nil {
 		return nil, err
 	}
-	for index := range attention {
-		attention[index] = compactAttentionItem(attention[index])
+	projected := make([]AttentionItem, len(attention))
+	for index, item := range attention {
+		projected[index] = compactAttentionItem(item)
 	}
-	encoded, err := json.Marshal(attention)
+	encoded, err := json.Marshal(projected)
 	if err != nil {
 		return nil, err
 	}

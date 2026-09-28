@@ -186,6 +186,7 @@ func migrateAttentionItem(item map[string]json.RawMessage) {
 	delete(item, "acknowledged_content_version")
 	delete(item, "state_version")
 	delete(item, "unacknowledged")
+	delete(item, "truncated_fields")
 }
 
 func marshalMigrationJSON(value any) (string, error) {
