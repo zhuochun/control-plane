@@ -100,12 +100,18 @@ func (a *App) event(ctx context.Context, tx *sql.Tx, actor, entityType, entityID
 }
 
 type Settings struct {
-	Timezone        string `json:"timezone"`
-	AgentsMD        string `json:"agents_md"`
-	UserMD          string `json:"user_md"`
-	DefaultAgentsMD string `json:"default_agents_md"`
-	DefaultUserMD   string `json:"default_user_md"`
+	Timezone         string `json:"timezone"`
+	AgentsMD         string `json:"agents_md"`
+	UserMD           string `json:"user_md"`
+	DefaultAgentsMD  string `json:"default_agents_md"`
+	DefaultUserMD    string `json:"default_user_md"`
+	AgentsMDMaxBytes int    `json:"agents_md_max_bytes"`
+	UserMDMaxBytes   int    `json:"user_md_max_bytes"`
 }
+
+const AgentsMDMaxBytes = 8 << 10
+const UserMDMaxBytes = 16 << 10
+
 type SetSettings struct {
 	RequestID string  `json:"request_id"`
 	Timezone  string  `json:"timezone"`
@@ -143,7 +149,7 @@ func (row settingsRow) public() Settings {
 	if row.timezoneMode == "auto" {
 		timezone = "browser"
 	}
-	return Settings{Timezone: timezone, AgentsMD: row.agentsMD, UserMD: row.userMD, DefaultAgentsMD: row.defaultAgentsMD, DefaultUserMD: row.defaultUserMD}
+	return Settings{Timezone: timezone, AgentsMD: row.agentsMD, UserMD: row.userMD, DefaultAgentsMD: row.defaultAgentsMD, DefaultUserMD: row.defaultUserMD, AgentsMDMaxBytes: AgentsMDMaxBytes, UserMDMaxBytes: UserMDMaxBytes}
 }
 
 func (a *App) Settings(ctx context.Context) (Settings, error) {
@@ -173,14 +179,17 @@ func (a *App) SetSettings(ctx context.Context, input SetSettings) (json.RawMessa
 		}
 		agentsMD := current.agentsMD
 		if input.AgentsMD != nil {
+			if *input.AgentsMD != current.agentsMD && len(*input.AgentsMD) > AgentsMDMaxBytes {
+				return nil, Invalid("AGENTS.md must be 8 KiB or smaller")
+			}
 			agentsMD = *input.AgentsMD
 		}
 		userMD := current.userMD
 		if input.UserMD != nil {
+			if *input.UserMD != current.userMD && len(*input.UserMD) > UserMDMaxBytes {
+				return nil, Invalid("USER.md must be 16 KiB or smaller")
+			}
 			userMD = *input.UserMD
-		}
-		if len([]byte(agentsMD)) > 64<<10 || len([]byte(userMD)) > 64<<10 {
-			return nil, Invalid("context files must each be 64 KiB or smaller")
 		}
 		if _, err = tx.ExecContext(ctx, "UPDATE settings SET value = ? WHERE key = 'timezone'", timezoneValue); err != nil {
 			return nil, err
@@ -194,7 +203,7 @@ func (a *App) SetSettings(ctx context.Context, input SetSettings) (json.RawMessa
 		if _, err = tx.ExecContext(ctx, "UPDATE settings SET value = ? WHERE key = 'user_md'", userMD); err != nil {
 			return nil, err
 		}
-		settings := Settings{Timezone: input.Timezone, AgentsMD: agentsMD, UserMD: userMD, DefaultAgentsMD: current.defaultAgentsMD, DefaultUserMD: current.defaultUserMD}
+		settings := Settings{Timezone: input.Timezone, AgentsMD: agentsMD, UserMD: userMD, DefaultAgentsMD: current.defaultAgentsMD, DefaultUserMD: current.defaultUserMD, AgentsMDMaxBytes: AgentsMDMaxBytes, UserMDMaxBytes: UserMDMaxBytes}
 		if err := a.event(ctx, tx, "user", "settings", "timezone", "settings.updated", settings); err != nil {
 			return nil, err
 		}
@@ -209,8 +218,8 @@ func (a *App) SetUserContext(ctx context.Context, input SetUserContext) (json.Ra
 		if input.UserMD == nil {
 			return nil, Invalid("user_md is required")
 		}
-		if len([]byte(*input.UserMD)) > 64<<10 {
-			return nil, Invalid("USER.md must be 64 KiB or smaller")
+		if len(*input.UserMD) > UserMDMaxBytes {
+			return nil, Invalid("USER.md must be 16 KiB or smaller")
 		}
 		current, err := readSettings(ctx, tx)
 		if err != nil {

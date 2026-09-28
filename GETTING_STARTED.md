@@ -52,6 +52,18 @@ and finish. The MCP tools are `start_run`, `submit_watch_findings`, and
 cadence does not mean a scheduler is running. Add external scheduling only
 after checking one real inspection and deciding how often you want it.
 
+If the agent uses the CLI, pass `--json` for compact output.
+`aicp run start --json` returns the first captured packet page. Follow every cursor under
+`brief.continuations` with `aicp brief --cursor <cursor> --json`. Follow
+`brief.changes_next_cursor` with the captured sequence bounds:
+
+```text
+aicp changes --after-seq <after> --through-seq <through> --cursor <cursor> --json
+```
+
+The CLI's `item list` returns current full Items; it does not replace the
+captured compact Attention pages.
+
 On return, open Attention for findings and actions, Monitoring for due reasons
 and coverage, Activity for Run history or interrupted Run recovery, and
 Preferences for context. The next agent visit can read a fresh brief and

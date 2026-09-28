@@ -385,6 +385,9 @@ func TestRunContextContinuationReturnsRemainingInterests(t *testing.T) {
 	if !ok || len(remaining) != 1 {
 		t.Fatalf("unexpected continuation page: %#v", page)
 	}
+	if _, repeated := page["contexts"]; repeated {
+		t.Fatal("continuation repeated AGENTS.md and USER.md")
+	}
 	seen := map[string]bool{}
 	for _, interest := range append(packet.Brief.Interests, remaining...) {
 		if seen[interest.Title] {

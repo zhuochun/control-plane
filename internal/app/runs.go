@@ -815,7 +815,6 @@ func (a *App) BriefPage(ctx context.Context, cursor string) (map[string]any, err
 		if err != nil {
 			return nil, err
 		}
-		page["contexts"] = snapshot.Contexts
 		if decoded.RunID != "" {
 			page["run_id"] = decoded.RunID
 		}

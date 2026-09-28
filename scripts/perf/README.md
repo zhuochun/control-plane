@@ -2,7 +2,7 @@
 
 The fixture builder creates a new, isolated aicp data directory with deterministic
 historical Items, content versions, Runs, Watcher results, events, and receipts.
-It refuses an existing directory. Both measurement scripts require the generated
+It refuses an existing directory. The browser and heartbeat scripts require the generated
 `perf-manifest.json`, use the loopback server, and refuse an occupied port 7331.
 They do not inspect external sources. The seeded historical rows are synthetic;
 the heartbeat script performs its measured writes through the public HTTP API.
@@ -40,3 +40,59 @@ node web/perf/heartbeat.mjs --binary dist/aicp.exe --data-dir $dataDir --output 
 Do not treat timings from a few repetitions as stable p95 targets. Compare
 matched fixtures and builds on the same machine, inspect the JSON for failed
 requests, and repeat across separate server processes before setting a gate.
+
+## Agent-use efficiency
+
+The [agent evaluation spec](../../docs/specs/20260928-agent-efficiency-evaluation-spec.md)
+adds short MCP journeys and token accounting. Run the six MCP cases and two CLI
+output cases with one command; it creates separate synthetic fixtures and JSON
+outputs in a new temporary directory:
+
+```powershell
+./scripts/perf/run-agent-eval.ps1
+```
+
+To run one case separately:
+
+```powershell
+$dataDir = Join-Path ([IO.Path]::GetTempPath()) ('aicp-agent-eval-' + [guid]::NewGuid().ToString('N'))
+go run ./scripts/perf/seed.go -data-dir $dataDir -profile mature -attention-percent 20
+go run ./scripts/perf/agent-eval -data-dir $dataDir -mode quiet -output (Join-Path ([IO.Path]::GetTempPath()) 'aicp-agent-eval.json')
+```
+
+Modes are `quiet`, `backlog` (250 synthetic user events), `reconcile` (one
+changed matter and a separate Item sharing its source URL), `multi-interest`
+(a broad Watcher), and `partial-retry` (one partial result with idempotent
+replay). Use Fresh for the last three quick checks, and matched Mature fixtures
+with 1% and 20% Attention to compare summary cost. The evaluator follows every
+Interest, Attention, and change cursor, submits a terminal result per selected
+Watcher, and checks the resulting state. It refuses data directories without a
+performance manifest. The one-matter source corpus and separate answer key are
+under `scripts/perf/corpus`.
+
+`web/perf/count-tokens.mjs` uses the pinned `js-tiktoken@1.0.21` package and
+`o200k_base` encoding as a **reference proxy**, not a claim about any Codex
+model's billed tokens. The evaluator counts MCP `content` and
+`structuredContent` separately because the SDK returns both representations;
+the actual agent harness determines which reaches the model. It keeps raw
+synthetic tool payloads in memory and writes only aggregate JSON. Tool
+definitions are counted once. The `duplicate_context_probe` rows are diagnostic
+subsets of continuation responses and must not be added to response totals.
+External source text is counted separately in `reconcile` mode.
+
+These deterministic traces verify protocol costs and expected state. They do
+not establish that a model selected the right Item or report provider usage.
+The [first local results](../../docs/perf/agent-efficiency-baseline-20260928.md)
+record the current reference baseline and its limits.
+
+The CLI cases build `aicp`, then run matched Mature fixtures with 20% Attention
+and 250 synthetic changes. They count exact stdout from both `--json` and the
+default pretty JSON rendering, including its shortened display IDs. The sample
+covers status, settings, Interest and Watcher lists/details, Run and proposal
+lists, one Item detail, all 20 full Attention Item list pages, `brief` preview,
+`run start`, every captured Interest and Attention continuation via `brief
+--cursor`, the remaining change pages, three `run submit` calls, `run finish`,
+and `run get`. Each output is counted by command category; only aggregate
+counts are saved. The evaluator asserts that the CLI consumed the full captured
+snapshot. CLI `item list` pages return current full Items, so their cost is
+reported separately from the compact Run packet.

@@ -8,6 +8,7 @@ import (
 	"log/slog"
 	"net"
 	"net/http"
+	"net/url"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -230,7 +231,16 @@ GETTING_STARTED.md for the full agent-assisted path.`, SilenceUsage: true, Silen
 	root.AddCommand(runCommand(printResult))
 	root.AddCommand(changesCommand(printResult))
 	root.AddCommand(proposalCommand(printResult))
-	root.AddCommand(&cobra.Command{Use: "brief", Args: cobra.NoArgs, Short: "Read due work and human changes", RunE: func(cmd *cobra.Command, args []string) error { return printResult(cmd, "GET", "/brief", nil) }})
+	var briefCursor string
+	brief := &cobra.Command{Use: "brief", Args: cobra.NoArgs, Short: "Read due work and human changes", RunE: func(cmd *cobra.Command, args []string) error {
+		path := "/brief"
+		if briefCursor != "" {
+			path += "?cursor=" + url.QueryEscape(briefCursor)
+		}
+		return printResult(cmd, "GET", path, nil)
+	}}
+	brief.Flags().StringVar(&briefCursor, "cursor", "", "Continuation cursor from the brief or Run packet")
+	root.AddCommand(brief)
 	root.AddCommand(&cobra.Command{Use: "mcp", Args: cobra.NoArgs, Short: "Serve MCP over stdio using the local HTTP server", RunE: func(cmd *cobra.Command, args []string) error {
 		return mcpserver.New(server, version).Run(cmd.Context(), &mcp.StdioTransport{})
 	}})

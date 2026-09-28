@@ -1,0 +1,26 @@
+{
+  "observed_through": "2026-09-28T00:00:00Z",
+  "watcher_sources": {
+    "perf/source/0": [],
+    "perf/source/1": [
+    {
+      "source_id": "thread-1",
+      "url": "https://example.com/1",
+      "matter_key": "fixture:1",
+      "text": "The continuing release decision has new evidence: approval is delayed until the security review finishes. Keep the existing release-decision Item and its owner follow-up."
+    },
+    {
+      "source_id": "thread-1",
+      "url": "https://example.com/1",
+      "matter_key": "eval:distinct",
+      "text": "A separate hiring commitment is discussed in the same thread. No new hiring update occurred in this inspection range."
+    },
+    {
+      "source_id": "thread-irrelevant",
+      "url": "https://example.com/unrelated",
+      "matter_key": "unrelated",
+      "text": "A routine social invitation contains no relevant change."
+    }
+    ]
+  }
+}

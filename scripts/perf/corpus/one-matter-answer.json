@@ -1,0 +1,9 @@
+{
+  "updated_dedupe_key": "fixture:1",
+  "unchanged_dedupe_key": "eval:distinct",
+  "new_items": 0,
+  "required_source_url": "https://example.com/1",
+  "required_summary_fragment": "approval is delayed",
+  "preserved_todo_state": "todo",
+  "preserved_user_note": "Keep this local follow-up."
+}
