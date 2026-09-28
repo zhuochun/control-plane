@@ -1,4 +1,4 @@
-# Long-term aicp performance test plan
+# Long-term aicp performance test specification
 
 ## Purpose and boundaries
 
@@ -10,8 +10,8 @@ reproducible and identify whether time is spent in database work, application
 processing, response transfer, or browser rendering. It is a test design, not a
 claim about current performance or an instruction to change product behavior.
 
-Use the implemented Watcher–Interest model in [the glossary](glossary.md). A
-realistic installation has **few Watchers and many Items**. In this plan,
+Use the implemented Watcher–Interest model in [the glossary](../glossary.md). A
+realistic installation has **few Watchers and many Items**. In this specification,
 "retired Watchers" means `paused` or `deprecated` Watchers retained with their
 history. Item archiving is not implemented; acknowledgement, Done, and future
 reminders must not be used as substitutes for an archive state. Add an Item
@@ -135,21 +135,27 @@ changed ordering, or incorrect state fails the suite.
 The result report should show browser p50/p95 and memory against Item count for
 Attention, Library, Item inspector, Monitoring, and Activity. Give the slowest
 request or rendering step, dominant code/query path when known, response bytes,
-and evidence from the profiles before proposing an optimization. In particular,
-the initial implementation loaded all Items or Runs before HTTP list pagination,
-built the full Attention snapshot at Run start, and loaded complete Item
-collections in the portal. The suite should quantify these paths and any later
-repairs. Separate
-server latency from browser rendering and external-agent time.
+and evidence from the profiles before proposing an optimization. The
+[first baseline](../perf/20260928-perf-baseline.md) measured the earlier
+whole-collection pagination and portal loading paths and the resulting
+improvement. Continue separating server latency from browser rendering and
+external-agent time.
 
-## Implementation order
+## Current coverage and remaining work
 
-1. Build the deterministic aged-fixture generator and manifest validator. Add
-   scripted real-browser journeys for Attention, Library, Item inspector,
-   Monitoring, and Activity on Fresh and Mature.
-2. Add Large and Skewed profiles, plus deep-page, restart, and mixed-use browser
-   scenarios. Establish baseline distributions and agree on gates from actual
-   device measurements.
-3. Add a bounded HTTP driver for agent-only heartbeat and publication flows.
-   Keep a small Mature browser smoke profile in routine checks and run the full
-   suite on demand or before performance-sensitive releases.
+The [performance suite](../../scripts/perf/README.md) seeds Fresh, Mature,
+Large, and Skewed profiles. Its browser driver covers Attention, Library first
+and next pages, search and filters, Item inspector, Todos, Monitoring, and
+Activity. Its HTTP driver exercises three publication cycles, unchanged
+content, two concurrent readers, restart with an unfinished Run, and owner
+abandonment. The [first local report](../perf/20260928-perf-baseline.md) records
+single-host results and their sample limits.
+
+Deep-page and hot-Item history reads, partial and failed Watcher results under
+aged data, and broader mixed-use traces remain specified scenarios without
+dedicated measurements. The current fixture manifest records profile counts and
+generator version; byte sizes, the seed, and schema metadata are still to be
+added. Repeated measurements across separate server processes are also needed
+before adopting latency gates. Keep this suite on demand;
+`scripts/verify.ps1` exercises functional behavior but does not establish
+performance distributions.

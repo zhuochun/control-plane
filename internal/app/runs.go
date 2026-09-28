@@ -15,7 +15,11 @@ import (
 )
 
 const contextPageSize = 50
+const contextContinuationPageSize = 150
 const contextPageBytes = 64 << 10
+const attentionTitleMaxBytes = 256
+const attentionSummaryMaxBytes = 512
+const attentionReasonMaxBytes = 256
 
 type SelectedWatch struct {
 	ID               string          `json:"id"`
@@ -38,18 +42,18 @@ type InterestMatch struct {
 }
 
 type AttentionItem struct {
-	ID                         string         `json:"id"`
-	Kind                       string         `json:"kind"`
-	Interests                  []ItemInterest `json:"interests"`
-	WatchID                    *string        `json:"watch_id,omitempty"`
-	ParentID                   *string        `json:"parent_id,omitempty"`
-	Title                      string         `json:"title"`
-	Summary                    string         `json:"summary"`
-	ContentVersion             int64          `json:"content_version"`
-	TodoState                  string         `json:"todo_state"`
-	RemindAt                   *time.Time     `json:"remind_at,omitempty"`
-	AcknowledgedContentVersion int64          `json:"acknowledged_content_version"`
-	StateVersion               int64          `json:"state_version"`
+	ID              string         `json:"id"`
+	Kind            string         `json:"kind"`
+	Interests       []ItemInterest `json:"interests"`
+	WatchID         *string        `json:"watch_id,omitempty"`
+	ParentID        *string        `json:"parent_id,omitempty"`
+	Title           string         `json:"title"`
+	Summary         string         `json:"summary"`
+	ContentVersion  int64          `json:"content_version"`
+	TodoState       string         `json:"todo_state"`
+	RemindAt        *time.Time     `json:"remind_at,omitempty"`
+	Unacknowledged  bool           `json:"unacknowledged,omitempty"`
+	TruncatedFields []string       `json:"truncated_fields,omitempty"`
 }
 
 type Run struct {
@@ -391,7 +395,41 @@ ORDER BY CASE WHEN remind_at IS NOT NULL AND remind_at<=? THEN 0 WHEN todo_state
 }
 
 func attentionItem(item Item) AttentionItem {
-	return AttentionItem{ID: item.ID, Kind: item.Kind, Interests: item.Interests, WatchID: item.WatchID, ParentID: item.ParentID, Title: item.Title, Summary: item.Summary, ContentVersion: item.ContentVersion, TodoState: item.TodoState, RemindAt: item.RemindAt, AcknowledgedContentVersion: item.AcknowledgedContentVersion, StateVersion: item.StateVersion}
+	title, titleTruncated := compactContextText(item.Title, attentionTitleMaxBytes)
+	summary, summaryTruncated := compactContextText(item.Summary, attentionSummaryMaxBytes)
+	interests := append([]ItemInterest(nil), item.Interests...)
+	reasonTruncated := false
+	for index := range interests {
+		var clipped bool
+		interests[index].Reason, clipped = compactContextText(interests[index].Reason, attentionReasonMaxBytes)
+		reasonTruncated = reasonTruncated || clipped
+	}
+	var truncatedFields []string
+	if titleTruncated {
+		truncatedFields = append(truncatedFields, "title")
+	}
+	if summaryTruncated {
+		truncatedFields = append(truncatedFields, "summary")
+	}
+	if reasonTruncated {
+		truncatedFields = append(truncatedFields, "interest_reason")
+	}
+	return AttentionItem{ID: item.ID, Kind: item.Kind, Interests: interests, WatchID: item.WatchID, ParentID: item.ParentID, Title: title, Summary: summary, ContentVersion: item.ContentVersion, TodoState: item.TodoState, RemindAt: item.RemindAt, Unacknowledged: item.AcknowledgedContentVersion < item.ContentVersion, TruncatedFields: truncatedFields}
+}
+
+func compactContextText(value string, maxBytes int) (string, bool) {
+	if len(value) <= maxBytes {
+		return value, false
+	}
+	limit := maxBytes - len("…")
+	cut := 0
+	for index := range value {
+		if index > limit {
+			break
+		}
+		cut = index
+	}
+	return value[:cut] + "…", true
 }
 
 func contextSnapshot(ctx context.Context, db *sql.Tx, settings settingsRow, now int64) (runContextSnapshot, error) {
@@ -406,20 +444,32 @@ func contextSnapshot(ctx context.Context, db *sql.Tx, settings settingsRow, now 
 	return runContextSnapshot{Interests: interests, Attention: attention, Contexts: map[string]string{"AGENTS.md": settings.agentsMD, "USER.md": settings.userMD}}, nil
 }
 
-func contextPage[T any](runID, collection string, items []T, offset int) (map[string]any, error) {
+func contextPage[T any](runID, collection string, items []T, offset, pageSize int) (map[string]any, error) {
 	if offset < 0 || offset > len(items) {
 		return nil, Invalid("Continuation cursor is not in this collection")
 	}
-	end := min(offset+contextPageSize, len(items))
-	for end > offset+1 {
+	end := min(offset+pageSize, len(items))
+	if end > offset+1 {
 		encoded, err := json.Marshal(items[offset:end])
 		if err != nil {
 			return nil, err
 		}
-		if len(encoded) <= contextPageBytes {
-			break
+		if len(encoded) > contextPageBytes {
+			low, high := offset+1, end-1
+			for low < high {
+				middle := low + (high-low+1)/2
+				encoded, err = json.Marshal(items[offset:middle])
+				if err != nil {
+					return nil, err
+				}
+				if len(encoded) <= contextPageBytes {
+					low = middle
+				} else {
+					high = middle - 1
+				}
+			}
+			end = low
 		}
-		end--
 	}
 	result := map[string]any{"collection": collection, "items": items[offset:end]}
 	if end < len(items) {
@@ -429,11 +479,11 @@ func contextPage[T any](runID, collection string, items []T, offset int) (map[st
 }
 
 func firstContextPages(snapshot runContextSnapshot, runID string) (map[string]any, error) {
-	interests, err := contextPage(runID, "interests", snapshot.Interests, 0)
+	interests, err := contextPage(runID, "interests", snapshot.Interests, 0, contextPageSize)
 	if err != nil {
 		return nil, err
 	}
-	attention, err := contextPage(runID, "attention_items", snapshot.Attention, 0)
+	attention, err := contextPage(runID, "attention_items", snapshot.Attention, 0, contextPageSize)
 	if err != nil {
 		return nil, err
 	}
@@ -808,9 +858,9 @@ func (a *App) BriefPage(ctx context.Context, cursor string) (map[string]any, err
 		var page map[string]any
 		switch decoded.Collection {
 		case "interests":
-			page, err = contextPage(decoded.RunID, decoded.Collection, snapshot.Interests, decoded.Offset)
+			page, err = contextPage(decoded.RunID, decoded.Collection, snapshot.Interests, decoded.Offset, contextContinuationPageSize)
 		case "attention_items":
-			page, err = contextPage(decoded.RunID, decoded.Collection, snapshot.Attention, decoded.Offset)
+			page, err = contextPage(decoded.RunID, decoded.Collection, snapshot.Attention, decoded.Offset, contextContinuationPageSize)
 		}
 		if err != nil {
 			return nil, err

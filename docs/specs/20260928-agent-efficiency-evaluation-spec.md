@@ -3,7 +3,7 @@
 - Date: 2026-09-28
 - Status: Deterministic MCP evaluation implemented.
 - Domain language: [glossary](../glossary.md)
-- Existing workload baseline: [long-term performance plan](../long-term-performance-test-plan.md)
+- Existing workload baseline: [long-term performance specification](20260928-long-term-performance-test-spec.md)
 - Current agent journey: [heartbeat specification](20260916-agent-experience-and-heartbeat-spec.md) and [packaged prompt](../../examples/heartbeat-prompt.md)
 
 ## Outcome and boundary
@@ -43,6 +43,18 @@ that measured baseline for comparison and records whether a candidate repeats
 them. `web/perf/heartbeat.mjs` continues to measure HTTP publication latency;
 the separate MCP evaluator consumes the packet continuations and counts
 reference tokens.
+
+The first packet page retains 50 entries per collection. Continuations may
+carry up to 150 entries, targeting 64 KiB of items per page; one oversized
+entry is returned alone to preserve progress. Agent-facing
+Attention entries omit the user-state version and expose `unacknowledged`
+instead of the exact acknowledgement version. Title, summary, and Interest
+reason text are capped at 256, 512, and 256 UTF-8 bytes in this projection;
+`truncated_fields` identifies omissions. The full Item remains available from
+`get_item`. Correctness comparisons must still verify every captured entry and
+read full detail when a truncated entry may matter. The version 6 data
+migration converts existing captured Run and selected Watch snapshots, plus
+stored start-Run retry receipts, to this projection before runtime reads them.
 
 Progressive disclosure therefore means choosing when to read full Item content
 and history after the complete compact snapshot has been consumed. It does not
