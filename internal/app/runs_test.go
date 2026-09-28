@@ -348,6 +348,20 @@ func TestStartRunNormalizesInterestAndAttentionContext(t *testing.T) {
 	if len(packet.Brief.Attention[0].Summary) > attentionSummaryMaxBytes || !slices.Contains(packet.Brief.Attention[0].TruncatedFields, "summary") {
 		t.Fatalf("long summary was not marked and capped: %+v", packet.Brief.Attention[0])
 	}
+	var captured, receipt string
+	if err = s.DB.QueryRowContext(ctx, `SELECT context_snapshot FROM runs WHERE id=(SELECT id FROM runs WHERE status='running')`).Scan(&captured); err != nil {
+		t.Fatal(err)
+	}
+	if err = s.DB.QueryRowContext(ctx, `SELECT response FROM command_receipts WHERE request_id='context-run'`).Scan(&receipt); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(captured, longSummary) || !strings.Contains(receipt, longSummary) || strings.Contains(captured, "truncated_fields") || strings.Contains(receipt, "truncated_fields") {
+		t.Fatal("Run snapshot or receipt stored output truncation")
+	}
+	replay, replayErr := a.StartRun(ctx, StartRun{RequestID: "context-run"})
+	if replayErr != nil || string(replay) != string(raw) {
+		t.Fatalf("start Run replay changed rendered packet: %s %v", replay, replayErr)
+	}
 	full, err := a.Item(ctx, stored.ID)
 	if err != nil || full.Summary != longSummary {
 		t.Fatalf("full Item detail changed: %+v %v", full, err)
@@ -431,20 +445,20 @@ func TestContextContinuationPageUsesItemAndByteBounds(t *testing.T) {
 	for index := range items {
 		items[index].Summary = strings.Repeat("long summary ", 120)
 	}
-	bounded, err := contextPage("run", "attention_items", items, contextPageSize, contextContinuationPageSize)
+	bounded, err := contextPageProjected("run", "attention_items", items, contextPageSize, contextContinuationPageSize, compactAttentionItem)
 	if err != nil {
 		t.Fatal(err)
 	}
 	pageItems := bounded["items"].([]AttentionItem)
 	encoded, err := json.Marshal(pageItems)
-	if err != nil || len(pageItems) < 1 || len(pageItems) >= contextContinuationPageSize || len(encoded) > contextPageBytes {
+	if err != nil || len(pageItems) < 1 || len(pageItems) >= contextContinuationPageSize || len(encoded) > contextPageBytes || len(pageItems[0].Summary) > attentionSummaryMaxBytes || !slices.Contains(pageItems[0].TruncatedFields, "summary") {
 		t.Fatalf("byte cap failed: %d items, %d bytes, %v", len(pageItems), len(encoded), err)
 	}
 }
 
 func TestAttentionProjectionBoundsProseAndPreservesDetail(t *testing.T) {
 	item := Item{ID: "item", Kind: "report", Title: strings.Repeat("界", 100), Summary: strings.Repeat("🙂", 200), ContentVersion: 2, AcknowledgedContentVersion: 1, StateVersion: 7, Interests: []ItemInterest{{ID: "one", Reason: strings.Repeat("é", 150)}, {ID: "two", Reason: "Short reason"}}}
-	projected := attentionItem(item)
+	projected := compactAttentionItem(attentionItem(item))
 	for _, field := range []struct {
 		name  string
 		value string
@@ -454,15 +468,56 @@ func TestAttentionProjectionBoundsProseAndPreservesDetail(t *testing.T) {
 			t.Errorf("%s cap: %d bytes, %q", field.name, len(field.value), field.value)
 		}
 	}
-	if !slices.Equal(projected.TruncatedFields, []string{"title", "summary", "interest_reason"}) || !projected.Unacknowledged || projected.Interests[1].Reason != "Short reason" {
+	if !slices.Equal(projected.TruncatedFields, []string{"title", "summary", "interest_reason"}) || projected.Interests[1].Reason != "Short reason" {
 		t.Fatalf("projection lost meaning: %+v", projected)
 	}
 	if len(item.Title) != 300 || len(item.Summary) != 800 || len(item.Interests[0].Reason) != 300 {
 		t.Fatal("projection mutated the full Item")
 	}
 	encoded, err := json.Marshal(projected)
-	if err != nil || strings.Contains(string(encoded), "acknowledged_content_version") || strings.Contains(string(encoded), "state_version") || !strings.Contains(string(encoded), `"unacknowledged":true`) {
+	if err != nil || strings.Contains(string(encoded), "acknowledged_content_version") || strings.Contains(string(encoded), "state_version") || strings.Contains(string(encoded), "unacknowledged") {
 		t.Fatalf("projection exposed internal versions: %s %v", encoded, err)
+	}
+}
+
+func TestAcknowledgementSincePreviousRunIsAChangeNotAttention(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	a := New(s)
+	raw, err := a.PutItem(ctx, "", PutItem{RequestID: "item-before-ack", DedupeKey: "ack-flow", ExpectedContentVersion: 0, Kind: "note", Title: "Already read", Summary: "No open task", Sources: []Source{}, Report: Report{SchemaVersion: 1, BodyMD: "Body"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var item Item
+	if err = json.Unmarshal(raw, &item); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = s.DB.ExecContext(ctx, `UPDATE settings SET value=(SELECT CAST(MAX(seq) AS TEXT) FROM events) WHERE key='acknowledged_event_seq'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.ApplyItemAction(ctx, item.ID, ApplyItemAction{RequestID: "ack-between-runs", ExpectedStateVersion: item.StateVersion, Action: Action{Type: "acknowledge", ContentVersion: item.ContentVersion}}); err != nil {
+		t.Fatal(err)
+	}
+	empty := Field[[]string]{Set: true, Value: []string{}}
+	raw, err = a.StartRun(ctx, StartRun{RequestID: "run-after-ack", WatchIDs: empty})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var packet struct {
+		Brief struct {
+			Attention []AttentionItem `json:"attention_items"`
+			Changes   []Event         `json:"changes"`
+		} `json:"brief"`
+	}
+	if err = json.Unmarshal(raw, &packet); err != nil {
+		t.Fatal(err)
+	}
+	if len(packet.Brief.Attention) != 0 || len(packet.Brief.Changes) != 1 || packet.Brief.Changes[0].ChangeType != "item.state_updated" || !strings.Contains(string(packet.Brief.Changes[0].Payload), `"type":"acknowledge"`) {
+		t.Fatalf("acknowledgement was not represented by the change range: %+v", packet.Brief)
 	}
 }
 

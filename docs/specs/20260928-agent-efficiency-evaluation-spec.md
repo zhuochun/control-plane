@@ -47,14 +47,17 @@ reference tokens.
 The first packet page retains 50 entries per collection. Continuations may
 carry up to 150 entries, targeting 64 KiB of items per page; one oversized
 entry is returned alone to preserve progress. Agent-facing
-Attention entries omit the user-state version and expose `unacknowledged`
-instead of the exact acknowledgement version. Title, summary, and Interest
+Attention entries omit user-state and acknowledgement versions. An Item
+acknowledgement since the previously handled Run appears in the captured
+change range; open Todos and due reminders still follow Attention rules.
+Title, summary, and Interest
 reason text are capped at 256, 512, and 256 UTF-8 bytes in this projection;
 `truncated_fields` identifies omissions. The full Item remains available from
 `get_item`. Correctness comparisons must still verify every captured entry and
-read full detail when a truncated entry may matter. The version 6 data
-migration converts existing captured Run and selected Watch snapshots, plus
-stored start-Run retry receipts, to this projection before runtime reads them.
+read full detail when a truncated entry may matter. Run snapshots and retry
+receipts retain full captured text; truncation is applied only when a response
+is rendered. The version 6 data migration converts older response fields while
+preserving the full text in existing Run snapshots and retry receipts.
 
 Progressive disclosure therefore means choosing when to read full Item content
 and history after the complete compact snapshot has been consumed. It does not

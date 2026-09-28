@@ -52,7 +52,6 @@ type AttentionItem struct {
 	ContentVersion  int64          `json:"content_version"`
 	TodoState       string         `json:"todo_state"`
 	RemindAt        *time.Time     `json:"remind_at,omitempty"`
-	Unacknowledged  bool           `json:"unacknowledged,omitempty"`
 	TruncatedFields []string       `json:"truncated_fields,omitempty"`
 }
 
@@ -145,7 +144,7 @@ func (a *App) RunDetail(ctx context.Context, id string) (map[string]any, error) 
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"run": run, "selected_watches": run.SelectedWatches, "results": results}, nil
+	return map[string]any{"run": run, "selected_watches": compactSelectedWatches(run.SelectedWatches), "results": results}, nil
 }
 func (a *App) Runs(ctx context.Context) ([]RunSummary, error) {
 	rows, err := a.Store.DB.QueryContext(ctx, "SELECT "+runColumns+" FROM runs ORDER BY started_at DESC,id DESC")
@@ -159,7 +158,7 @@ func (a *App) Runs(ctx context.Context) ([]RunSummary, error) {
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, RunSummary{Run: item, SelectedWatches: item.SelectedWatches})
+		items = append(items, RunSummary{Run: item, SelectedWatches: compactSelectedWatches(item.SelectedWatches)})
 	}
 	return items, rows.Err()
 }
@@ -195,7 +194,7 @@ func (a *App) RunsPage(ctx context.Context, afterID string, limit int) ([]RunSum
 		if scanErr != nil {
 			return nil, false, scanErr
 		}
-		items = append(items, RunSummary{Run: run, SelectedWatches: run.SelectedWatches})
+		items = append(items, RunSummary{Run: run, SelectedWatches: compactSelectedWatches(run.SelectedWatches)})
 	}
 	if err = rows.Err(); err != nil {
 		return nil, false, err
@@ -395,8 +394,13 @@ ORDER BY CASE WHEN remind_at IS NOT NULL AND remind_at<=? THEN 0 WHEN todo_state
 }
 
 func attentionItem(item Item) AttentionItem {
-	title, titleTruncated := compactContextText(item.Title, attentionTitleMaxBytes)
-	summary, summaryTruncated := compactContextText(item.Summary, attentionSummaryMaxBytes)
+	return AttentionItem{ID: item.ID, Kind: item.Kind, Interests: item.Interests, WatchID: item.WatchID, ParentID: item.ParentID, Title: item.Title, Summary: item.Summary, ContentVersion: item.ContentVersion, TodoState: item.TodoState, RemindAt: item.RemindAt}
+}
+
+func compactAttentionItem(item AttentionItem) AttentionItem {
+	var titleTruncated, summaryTruncated bool
+	item.Title, titleTruncated = compactContextText(item.Title, attentionTitleMaxBytes)
+	item.Summary, summaryTruncated = compactContextText(item.Summary, attentionSummaryMaxBytes)
 	interests := append([]ItemInterest(nil), item.Interests...)
 	reasonTruncated := false
 	for index := range interests {
@@ -414,7 +418,9 @@ func attentionItem(item Item) AttentionItem {
 	if reasonTruncated {
 		truncatedFields = append(truncatedFields, "interest_reason")
 	}
-	return AttentionItem{ID: item.ID, Kind: item.Kind, Interests: interests, WatchID: item.WatchID, ParentID: item.ParentID, Title: title, Summary: summary, ContentVersion: item.ContentVersion, TodoState: item.TodoState, RemindAt: item.RemindAt, Unacknowledged: item.AcknowledgedContentVersion < item.ContentVersion, TruncatedFields: truncatedFields}
+	item.Interests = interests
+	item.TruncatedFields = truncatedFields
+	return item
 }
 
 func compactContextText(value string, maxBytes int) (string, bool) {
@@ -445,12 +451,23 @@ func contextSnapshot(ctx context.Context, db *sql.Tx, settings settingsRow, now 
 }
 
 func contextPage[T any](runID, collection string, items []T, offset, pageSize int) (map[string]any, error) {
+	return contextPageProjected(runID, collection, items, offset, pageSize, nil)
+}
+
+func contextPageProjected[T any](runID, collection string, items []T, offset, pageSize int, project func(T) T) (map[string]any, error) {
 	if offset < 0 || offset > len(items) {
 		return nil, Invalid("Continuation cursor is not in this collection")
 	}
 	end := min(offset+pageSize, len(items))
+	pageItems := items[offset:end]
+	if project != nil {
+		pageItems = make([]T, end-offset)
+		for index := range pageItems {
+			pageItems[index] = project(items[offset+index])
+		}
+	}
 	if end > offset+1 {
-		encoded, err := json.Marshal(items[offset:end])
+		encoded, err := json.Marshal(pageItems)
 		if err != nil {
 			return nil, err
 		}
@@ -458,7 +475,7 @@ func contextPage[T any](runID, collection string, items []T, offset, pageSize in
 			low, high := offset+1, end-1
 			for low < high {
 				middle := low + (high-low+1)/2
-				encoded, err = json.Marshal(items[offset:middle])
+				encoded, err = json.Marshal(pageItems[:middle-offset])
 				if err != nil {
 					return nil, err
 				}
@@ -471,7 +488,7 @@ func contextPage[T any](runID, collection string, items []T, offset, pageSize in
 			end = low
 		}
 	}
-	result := map[string]any{"collection": collection, "items": items[offset:end]}
+	result := map[string]any{"collection": collection, "items": pageItems[:end-offset]}
 	if end < len(items) {
 		result["next_cursor"] = encodeContextCursor(contextCursor{RunID: runID, Collection: collection, Offset: end})
 	}
@@ -483,7 +500,7 @@ func firstContextPages(snapshot runContextSnapshot, runID string) (map[string]an
 	if err != nil {
 		return nil, err
 	}
-	attention, err := contextPage(runID, "attention_items", snapshot.Attention, 0, contextPageSize)
+	attention, err := contextPageProjected(runID, "attention_items", snapshot.Attention, 0, contextPageSize, compactAttentionItem)
 	if err != nil {
 		return nil, err
 	}
@@ -503,6 +520,71 @@ func firstContextPages(snapshot runContextSnapshot, runID string) (map[string]an
 	return brief, nil
 }
 
+// The receipt keeps the full captured text. Its cursor still follows the
+// bounded output page, so a retry has the same continuation boundary.
+func firstStoredContextPages(snapshot runContextSnapshot, runID string) (map[string]any, error) {
+	brief, err := firstContextPages(snapshot, runID)
+	if err != nil {
+		return nil, err
+	}
+	count := len(brief["attention_items"].([]AttentionItem))
+	brief["attention_items"] = snapshot.Attention[:count]
+	return brief, nil
+}
+
+func compactSelectedWatches(watches []SelectedWatch) []SelectedWatch {
+	output := make([]SelectedWatch, len(watches))
+	for index, watch := range watches {
+		output[index] = watch
+		if watch.RelatedItems == nil {
+			continue
+		}
+		output[index].RelatedItems = make([]AttentionItem, len(watch.RelatedItems))
+		for itemIndex, item := range watch.RelatedItems {
+			output[index].RelatedItems[itemIndex] = compactAttentionItem(item)
+		}
+	}
+	return output
+}
+
+func compactStartRunResponse(raw json.RawMessage) (json.RawMessage, error) {
+	var response map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &response); err != nil {
+		return nil, err
+	}
+	var brief map[string]json.RawMessage
+	if err := json.Unmarshal(response["brief"], &brief); err != nil {
+		return nil, err
+	}
+	var attention []AttentionItem
+	if err := json.Unmarshal(brief["attention_items"], &attention); err != nil {
+		return nil, err
+	}
+	for index := range attention {
+		attention[index] = compactAttentionItem(attention[index])
+	}
+	encoded, err := json.Marshal(attention)
+	if err != nil {
+		return nil, err
+	}
+	brief["attention_items"] = encoded
+	var watches []SelectedWatch
+	if err := json.Unmarshal(brief["watches"], &watches); err != nil {
+		return nil, err
+	}
+	encoded, err = json.Marshal(compactSelectedWatches(watches))
+	if err != nil {
+		return nil, err
+	}
+	brief["watches"] = encoded
+	encoded, err = json.Marshal(brief)
+	if err != nil {
+		return nil, err
+	}
+	response["brief"] = encoded
+	return json.Marshal(response)
+}
+
 func loadRunContext(ctx context.Context, db querier, runID string) (runContextSnapshot, error) {
 	canonical, err := resolveID(ctx, db, "runs", runID)
 	if err != nil {
@@ -520,7 +602,7 @@ func loadRunContext(ctx context.Context, db querier, runID string) (runContextSn
 }
 
 func (a *App) StartRun(ctx context.Context, input StartRun) (json.RawMessage, error) {
-	return a.mutate(ctx, input.RequestID, "POST /runs", input, func(tx *sql.Tx) (any, error) {
+	raw, err := a.mutate(ctx, input.RequestID, "POST /runs", input, func(tx *sql.Tx) (any, error) {
 		if input.RunnerLabel == "" {
 			input.RunnerLabel = "agent"
 		}
@@ -574,7 +656,7 @@ func (a *App) StartRun(ctx context.Context, input StartRun) (json.RawMessage, er
 		if err != nil {
 			return nil, err
 		}
-		brief, err := firstContextPages(snapshot, id)
+		brief, err := firstStoredContextPages(snapshot, id)
 		if err != nil {
 			return nil, err
 		}
@@ -592,6 +674,10 @@ func (a *App) StartRun(ctx context.Context, input StartRun) (json.RawMessage, er
 		}
 		return map[string]any{"run": run, "brief": brief}, nil
 	})
+	if err != nil {
+		return nil, err
+	}
+	return compactStartRunResponse(raw)
 }
 
 func liveRun(run Run) error {
@@ -860,7 +946,7 @@ func (a *App) BriefPage(ctx context.Context, cursor string) (map[string]any, err
 		case "interests":
 			page, err = contextPage(decoded.RunID, decoded.Collection, snapshot.Interests, decoded.Offset, contextContinuationPageSize)
 		case "attention_items":
-			page, err = contextPage(decoded.RunID, decoded.Collection, snapshot.Attention, decoded.Offset, contextContinuationPageSize)
+			page, err = contextPageProjected(decoded.RunID, decoded.Collection, snapshot.Attention, decoded.Offset, contextContinuationPageSize, compactAttentionItem)
 		}
 		if err != nil {
 			return nil, err
@@ -909,7 +995,7 @@ func (a *App) BriefPage(ctx context.Context, cursor string) (map[string]any, err
 	if err != nil {
 		return nil, err
 	}
-	brief["watches"] = selected
+	brief["watches"] = compactSelectedWatches(selected)
 	brief["more_due_count"] = more
 	brief["changes"] = map[string]int64{"after_seq": after, "through_seq": through}
 	brief["changes_items"] = changes

@@ -8,6 +8,7 @@ import (
 )
 
 // Version 6 replaces the old Attention response fields in captured Run data.
+// Keep the full captured text; response size limits belong to output rendering.
 // Keep this conversion frozen: later response changes must get a new migration.
 func migrateAttentionSnapshots(ctx context.Context, tx *sql.Tx) error {
 	ids, err := migrationIDs(ctx, tx, `SELECT id FROM runs WHERE instr(context_snapshot, '"attention_items"')>0 OR instr(selected_watches, '"related_items"')>0`)
@@ -171,9 +172,7 @@ func migrateAttentionArray(parent map[string]json.RawMessage, key string) (bool,
 		return false, nil
 	}
 	for _, item := range items {
-		if err := migrateAttentionItem(item); err != nil {
-			return false, err
-		}
+		migrateAttentionItem(item)
 	}
 	encoded, err := json.Marshal(items)
 	if err != nil {
@@ -183,95 +182,10 @@ func migrateAttentionArray(parent map[string]json.RawMessage, key string) (bool,
 	return true, nil
 }
 
-func migrateAttentionItem(item map[string]json.RawMessage) error {
-	var contentVersion, acknowledgedVersion int64
-	if err := json.Unmarshal(item["content_version"], &contentVersion); err != nil {
-		return fmt.Errorf("content_version: %w", err)
-	}
-	if raw, ok := item["acknowledged_content_version"]; ok {
-		if err := json.Unmarshal(raw, &acknowledgedVersion); err != nil {
-			return fmt.Errorf("acknowledged_content_version: %w", err)
-		}
-	}
+func migrateAttentionItem(item map[string]json.RawMessage) {
 	delete(item, "acknowledged_content_version")
 	delete(item, "state_version")
-	if acknowledgedVersion < contentVersion {
-		item["unacknowledged"] = json.RawMessage("true")
-	} else {
-		delete(item, "unacknowledged")
-	}
-	var truncated []string
-	for _, field := range []struct {
-		key   string
-		limit int
-	}{{"title", 256}, {"summary", 512}} {
-		wasTruncated, err := capMigrationField(item, field.key, field.limit)
-		if err != nil {
-			return err
-		}
-		if wasTruncated {
-			truncated = append(truncated, field.key)
-		}
-	}
-	if raw, ok := item["interests"]; ok && string(raw) != "null" {
-		var interests []map[string]json.RawMessage
-		if err := json.Unmarshal(raw, &interests); err != nil {
-			return fmt.Errorf("interests: %w", err)
-		}
-		reasonTruncated := false
-		for _, interest := range interests {
-			clipped, err := capMigrationField(interest, "reason", 256)
-			if err != nil {
-				return err
-			}
-			reasonTruncated = reasonTruncated || clipped
-		}
-		if reasonTruncated {
-			encoded, err := json.Marshal(interests)
-			if err != nil {
-				return err
-			}
-			item["interests"] = encoded
-			truncated = append(truncated, "interest_reason")
-		}
-	}
-	if len(truncated) > 0 {
-		encoded, err := json.Marshal(truncated)
-		if err != nil {
-			return err
-		}
-		item["truncated_fields"] = encoded
-	} else {
-		delete(item, "truncated_fields")
-	}
-	return nil
-}
-
-func capMigrationField(item map[string]json.RawMessage, field string, limit int) (bool, error) {
-	raw, ok := item[field]
-	if !ok {
-		return false, nil
-	}
-	var value string
-	if err := json.Unmarshal(raw, &value); err != nil {
-		return false, fmt.Errorf("%s: %w", field, err)
-	}
-	if len(value) <= limit {
-		return false, nil
-	}
-	cut := 0
-	for index := range value {
-		if index > limit-len("…") {
-			break
-		}
-		cut = index
-	}
-	encoded, err := json.Marshal(value[:cut] + "…")
-	if err != nil {
-		return false, err
-	}
-	item[field] = encoded
-	return true, nil
+	delete(item, "unacknowledged")
 }
 
 func marshalMigrationJSON(value any) (string, error) {
