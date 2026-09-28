@@ -11,8 +11,10 @@ adapters.
 1. Read the current schema and application queries before editing. Identify
    the existing records, history, receipts, checkpoints, and user decisions the
    change must preserve.
-2. Add a new numbered SQL file under `internal/store/migrations`. Do not edit
-   a migration that may already have run in a user's database.
+2. Add a new numbered SQL file under `internal/store/migrations`. For a
+   byte-accurate JSON transformation that SQLite SQL cannot express clearly,
+   register a numbered transactional Go migration with the Goose provider.
+   Do not edit a migration that may already have run in a user's database.
 3. Update the supported schema-version bound in `internal/store/store.go` for
    the new version. Startup must continue to reject a database from a newer
    unsupported runtime.

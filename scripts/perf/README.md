@@ -82,7 +82,7 @@ External source text is counted separately in `reconcile` mode.
 
 These deterministic traces verify protocol costs and expected state. They do
 not establish that a model selected the right Item or report provider usage.
-The [first local results](../../docs/perf/agent-efficiency-baseline-20260928.md)
+The [first local results](../../docs/perf/20260928-agent-efficiency-baseline.md)
 record the current reference baseline and its limits.
 
 The CLI cases build `aicp`, then run matched Mature fixtures with 20% Attention
@@ -96,3 +96,12 @@ and `run get`. Each output is counted by command category; only aggregate
 counts are saved. The evaluator asserts that the CLI consumed the full captured
 snapshot. CLI `item list` pages return current full Items, so their cost is
 reported separately from the compact Run packet.
+
+The first packet keeps a 50-entry limit. Captured Interest and Attention
+continuations allow up to 150 entries with a 64 KiB item-array target; a single
+oversized entry is still returned so paging can progress. Attention entries
+omit the user-state version, replace the acknowledgement version with
+`unacknowledged`, and cap title, summary, and Interest reason text
+at 256, 512, and 256 UTF-8 bytes. `truncated_fields` marks entries that need a
+full `get_item` read when their omitted text matters. The source Item remains
+unchanged.

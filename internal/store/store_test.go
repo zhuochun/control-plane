@@ -3,13 +3,117 @@ package store
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"io/fs"
 	"path/filepath"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	"github.com/pressly/goose/v3"
 )
+
+func TestAttentionSnapshotMigrationFromVersion5(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "aicp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := fs.Sub(migrations, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := goose.NewProvider(goose.DialectSQLite3, db, source)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = provider.UpTo(ctx, 5); err != nil {
+		t.Fatal(err)
+	}
+	oldItem := map[string]any{
+		"id": "item-1", "kind": "report", "title": strings.Repeat("界", 100),
+		"summary": strings.Repeat("🙂", 200), "content_version": 2,
+		"acknowledged_content_version": 1, "state_version": 7, "todo_state": "todo",
+		"interests": []any{map[string]any{"id": "i-1", "reason": strings.Repeat("é", 150)}},
+	}
+	acknowledgedItem := map[string]any{
+		"id": "item-2", "kind": "report", "title": "Short", "summary": "Short",
+		"content_version": 2, "acknowledged_content_version": 2, "state_version": 9,
+	}
+	contextJSON, err := json.Marshal(map[string]any{"attention_items": []any{oldItem, acknowledgedItem}, "contexts": map[string]string{"USER.md": "Keep this"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	watchesJSON, err := json.Marshal([]any{map[string]any{"id": "w-1", "related_items": []any{oldItem}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, `INSERT INTO runs(id,runner_label,status,started_at,lease_expires_at,selected_watches,after_seq,through_seq,context_snapshot) VALUES('r-1','agent','running',1000,0,?,0,0,?)`, string(watchesJSON), string(contextJSON)); err != nil {
+		t.Fatal(err)
+	}
+	receiptJSON, err := json.Marshal(map[string]any{"run": map[string]string{"id": "r-1"}, "brief": map[string]any{"attention_items": []any{oldItem}, "watches": []any{map[string]any{"id": "w-1", "related_items": []any{oldItem}}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, `INSERT INTO command_receipts(request_id,request_hash,response) VALUES('start-r-1','hash',?)`, string(receiptJSON)); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	opened, err := Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer opened.Close()
+	var version int64
+	if err = opened.DB.QueryRowContext(ctx, `SELECT max(version_id) FROM goose_db_version WHERE is_applied=1`).Scan(&version); err != nil || version != 6 {
+		t.Fatalf("schema version %d: %v", version, err)
+	}
+	var savedContext, savedWatches, status string
+	if err = opened.DB.QueryRowContext(ctx, `SELECT context_snapshot,selected_watches,status FROM runs WHERE id='r-1'`).Scan(&savedContext, &savedWatches, &status); err != nil {
+		t.Fatal(err)
+	}
+	if status != "running" || !strings.Contains(savedContext, `"USER.md":"Keep this"`) {
+		t.Fatalf("run state changed: %s %s", status, savedContext)
+	}
+	for _, raw := range []string{savedContext, savedWatches} {
+		if strings.Contains(raw, "acknowledged_content_version") || strings.Contains(raw, "state_version") {
+			t.Fatalf("legacy response fields remain: %s", raw)
+		}
+	}
+	var snapshot struct {
+		Attention []struct {
+			Title, Summary string
+			Interests      []struct {
+				Reason string `json:"reason"`
+			} `json:"interests"`
+			Unacknowledged  bool     `json:"unacknowledged"`
+			TruncatedFields []string `json:"truncated_fields"`
+		} `json:"attention_items"`
+	}
+	if err = json.Unmarshal([]byte(savedContext), &snapshot); err != nil {
+		t.Fatal(err)
+	}
+	if len(snapshot.Attention) != 2 || !snapshot.Attention[0].Unacknowledged || snapshot.Attention[1].Unacknowledged || len(snapshot.Attention[1].TruncatedFields) != 0 {
+		t.Fatalf("acknowledgement conversion: %+v", snapshot.Attention)
+	}
+	first := snapshot.Attention[0]
+	if len(first.Title) > 256 || len(first.Summary) > 512 || len(first.Interests[0].Reason) > 256 || !utf8.ValidString(first.Title+first.Summary+first.Interests[0].Reason) || strings.Join(first.TruncatedFields, ",") != "title,summary,interest_reason" {
+		t.Fatalf("text conversion: %+v", first)
+	}
+	if !strings.Contains(savedWatches, `"unacknowledged":true`) || !strings.Contains(savedWatches, `"truncated_fields"`) {
+		t.Fatalf("selected Watch was not converted: %s", savedWatches)
+	}
+	var savedReceipt string
+	if err = opened.DB.QueryRowContext(ctx, `SELECT response FROM command_receipts WHERE request_id='start-r-1'`).Scan(&savedReceipt); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(savedReceipt, "acknowledged_content_version") || strings.Contains(savedReceipt, "state_version") || strings.Count(savedReceipt, `"unacknowledged":true`) != 2 {
+		t.Fatalf("start Run retry receipt was not converted: %s", savedReceipt)
+	}
+}
 
 func TestWatcherInterestMigrationPreservesHistory(t *testing.T) {
 	ctx := context.Background()

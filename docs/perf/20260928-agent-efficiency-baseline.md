@@ -106,3 +106,38 @@ is a conservative comparison for retrieving Attention summaries. It takes 40
 calls versus 20 list calls; the observed local call times are not a stable
 latency estimate. A CLI agent can now consume the complete captured packet
 without substituting mutable full Item records for its compact summaries.
+
+### Follow-up: larger pages and bounded Attention fields
+
+Two successive runs used the same Mature 20% Attention profile. The first
+raised continuation pages from 50 to at most 150 entries under the existing
+64 KiB item-array target. The second removed `state_version` from Attention
+entries, replaced the exact acknowledgement version with `unacknowledged`, and
+added 256/512/256-byte title, summary, and Interest reason caps. The first
+packet remains limited to 50 entries. Every run still consumed all 2,000
+captured summaries and passed the deterministic state assertions.
+
+| Stage, quiet MCP Run | Calls | Attention continuation pages | Structured result tokens | Text result tokens |
+| --- | ---: | ---: | ---: | ---: |
+| Prior 50-entry continuations | 44 | 39 | 259,599 | 273,241 |
+| Up to 150 entries | 18 | 13 | 256,477 | 269,833 |
+| Up to 150 entries and bounded fields | 18 | 13 | 243,578 | 256,834 |
+
+Together, these changes removed 26 MCP calls and 16,021 structured reference
+tokens (6.2%) in the matched workload profile. The corresponding CLI `--json`
+`run start` plus Attention continuation output fell from 262,267 to 246,196
+reference tokens. The fixture's prose was already shorter than the new caps,
+so the measured token reduction comes from removed and simplified fields, plus
+fewer page wrappers. A separate persisted-Item test verifies that long UTF-8
+text is capped only in the packet, marked in `truncated_fields`, and remains
+available in full Item detail. Single local timings are diagnostic; they do
+not establish a stable latency distribution.
+
+After adding the version 6 data migration, a fresh deterministic rerun passed
+all six MCP and both CLI cases. Mature 20% quiet still used 18 MCP calls and
+13 Attention continuation pages; it yielded 243,583 structured and 256,839
+text reference tokens. The corresponding CLI `--json` Run start and Attention
+continuations yielded 246,171 reference tokens. A populated version 5 upgrade
+test verifies that captured Run, selected Watch, and retry receipt Attention
+entries use the current projection, while the Run status and owner context stay
+intact.

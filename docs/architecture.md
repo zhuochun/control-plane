@@ -92,13 +92,14 @@ CI additionally runs Go tests with `-race`. The demo and browser tests use
 local fixtures and an isolated database, so they do not establish live access
 to external sources.
 
-For accumulated-data latency, use the isolated
-[performance suite](../scripts/perf/README.md) and compare with the
-[2026-09-28 local baseline](perf/perf-baseline-20260928.md). It is an on-demand
+For accumulated-data latency, use the
+[stress-test specification](specs/20260928-long-term-performance-test-spec.md)
+and isolated [performance suite](../scripts/perf/README.md); compare with the
+[2026-09-28 local baseline](perf/20260928-perf-baseline.md). It is an on-demand
 measurement, not part of `scripts/verify.ps1`.
 For agent packet costs and progressive detail reads, see the
 [agent evaluation spec](specs/20260928-agent-efficiency-evaluation-spec.md) and
-[first reference baseline](perf/agent-efficiency-baseline-20260928.md).
+[first reference baseline](perf/20260928-agent-efficiency-baseline.md).
 
 When reporting verification, name the exact command, result, and skipped
 surfaces. A package test does not establish portal behavior; a portal build does

@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/zhuochun/control-plane/internal/store"
 )
@@ -317,8 +318,13 @@ func TestStartRunNormalizesInterestAndAttentionContext(t *testing.T) {
 	var watch Watch
 	_ = json.Unmarshal(watchRaw, &watch)
 	interestID := unwatched.ID
-	_, err = a.PutItem(ctx, "", PutItem{RequestID: "attention-context", DedupeKey: "attention:unwatched", ExpectedContentVersion: 0, Kind: "note", Interests: []ItemInterest{{ID: interestID, Reason: "Local context"}}, Title: "Unwatched attention", Summary: "This must still be visible to the heartbeat.", Sources: []Source{}, Report: Report{SchemaVersion: 1, BodyMD: "Review this local finding."}, InitialTodoState: "todo"})
+	longSummary := strings.Repeat("This must still be visible to the heartbeat. ", 20)
+	itemRaw, err := a.PutItem(ctx, "", PutItem{RequestID: "attention-context", DedupeKey: "attention:unwatched", ExpectedContentVersion: 0, Kind: "note", Interests: []ItemInterest{{ID: interestID, Reason: "Local context"}}, Title: "Unwatched attention", Summary: longSummary, Sources: []Source{}, Report: Report{SchemaVersion: 1, BodyMD: "Review this local finding."}, InitialTodoState: "todo"})
 	if err != nil {
+		t.Fatal(err)
+	}
+	var stored Item
+	if err = json.Unmarshal(itemRaw, &stored); err != nil {
 		t.Fatal(err)
 	}
 	raw, err := a.StartRun(ctx, StartRun{RequestID: "context-run"})
@@ -338,6 +344,13 @@ func TestStartRunNormalizesInterestAndAttentionContext(t *testing.T) {
 	}
 	if len(packet.Brief.Interests) != 2 || len(packet.Brief.Attention) != 1 || len(packet.Brief.Watches) != 1 || packet.Brief.Attention[0].Title != "Unwatched attention" {
 		t.Fatalf("normalized packet omitted context: %+v", packet.Brief)
+	}
+	if len(packet.Brief.Attention[0].Summary) > attentionSummaryMaxBytes || !slices.Contains(packet.Brief.Attention[0].TruncatedFields, "summary") {
+		t.Fatalf("long summary was not marked and capped: %+v", packet.Brief.Attention[0])
+	}
+	full, err := a.Item(ctx, stored.ID)
+	if err != nil || full.Summary != longSummary {
+		t.Fatalf("full Item detail changed: %+v %v", full, err)
 	}
 	if len(packet.Brief.Watches[0].Interests) != 1 || packet.Brief.Watches[0].Interests[0].ID != watched.ID || packet.Brief.Contexts["AGENTS.md"] == "" {
 		t.Fatalf("watch/context normalization failed: %+v", packet.Brief)
@@ -399,6 +412,57 @@ func TestRunContextContinuationReturnsRemainingInterests(t *testing.T) {
 		if !seen[fmt.Sprintf("Interest %d", index)] {
 			t.Fatalf("Interest %d missing across pages", index)
 		}
+	}
+}
+
+func TestContextContinuationPageUsesItemAndByteBounds(t *testing.T) {
+	items := make([]AttentionItem, contextPageSize+contextContinuationPageSize+1)
+	for index := range items {
+		items[index] = AttentionItem{ID: fmt.Sprint(index), Title: "Item", Summary: "Short summary"}
+	}
+	first, err := contextPage("run", "attention_items", items, 0, contextPageSize)
+	if err != nil || len(first["items"].([]AttentionItem)) != contextPageSize {
+		t.Fatalf("first page size: %#v %v", first, err)
+	}
+	continuation, err := contextPage("run", "attention_items", items, contextPageSize, contextContinuationPageSize)
+	if err != nil || len(continuation["items"].([]AttentionItem)) != contextContinuationPageSize || continuation["next_cursor"] == nil {
+		t.Fatalf("continuation page size: %#v %v", continuation, err)
+	}
+	for index := range items {
+		items[index].Summary = strings.Repeat("long summary ", 120)
+	}
+	bounded, err := contextPage("run", "attention_items", items, contextPageSize, contextContinuationPageSize)
+	if err != nil {
+		t.Fatal(err)
+	}
+	pageItems := bounded["items"].([]AttentionItem)
+	encoded, err := json.Marshal(pageItems)
+	if err != nil || len(pageItems) < 1 || len(pageItems) >= contextContinuationPageSize || len(encoded) > contextPageBytes {
+		t.Fatalf("byte cap failed: %d items, %d bytes, %v", len(pageItems), len(encoded), err)
+	}
+}
+
+func TestAttentionProjectionBoundsProseAndPreservesDetail(t *testing.T) {
+	item := Item{ID: "item", Kind: "report", Title: strings.Repeat("界", 100), Summary: strings.Repeat("🙂", 200), ContentVersion: 2, AcknowledgedContentVersion: 1, StateVersion: 7, Interests: []ItemInterest{{ID: "one", Reason: strings.Repeat("é", 150)}, {ID: "two", Reason: "Short reason"}}}
+	projected := attentionItem(item)
+	for _, field := range []struct {
+		name  string
+		value string
+		limit int
+	}{{"title", projected.Title, attentionTitleMaxBytes}, {"summary", projected.Summary, attentionSummaryMaxBytes}, {"reason", projected.Interests[0].Reason, attentionReasonMaxBytes}} {
+		if len(field.value) > field.limit || !utf8.ValidString(field.value) || !strings.HasSuffix(field.value, "…") {
+			t.Errorf("%s cap: %d bytes, %q", field.name, len(field.value), field.value)
+		}
+	}
+	if !slices.Equal(projected.TruncatedFields, []string{"title", "summary", "interest_reason"}) || !projected.Unacknowledged || projected.Interests[1].Reason != "Short reason" {
+		t.Fatalf("projection lost meaning: %+v", projected)
+	}
+	if len(item.Title) != 300 || len(item.Summary) != 800 || len(item.Interests[0].Reason) != 300 {
+		t.Fatal("projection mutated the full Item")
+	}
+	encoded, err := json.Marshal(projected)
+	if err != nil || strings.Contains(string(encoded), "acknowledged_content_version") || strings.Contains(string(encoded), "state_version") || !strings.Contains(string(encoded), `"unacknowledged":true`) {
+		t.Fatalf("projection exposed internal versions: %s %v", encoded, err)
 	}
 }
 

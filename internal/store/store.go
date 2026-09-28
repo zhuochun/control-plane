@@ -76,7 +76,8 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	provider, err := goose.NewProvider(goose.DialectSQLite3, s.DB, source)
+	provider, err := goose.NewProvider(goose.DialectSQLite3, s.DB, source,
+		goose.WithGoMigrations(goose.NewGoMigration(6, &goose.GoFunc{RunTx: migrateAttentionSnapshots}, nil)))
 	if err != nil {
 		return err
 	}
@@ -84,7 +85,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if version > 5 {
+	if version > 6 {
 		return fmt.Errorf("database schema %d is newer than this aicp supports; upgrade aicp", version)
 	}
 	if _, err := provider.Up(ctx); err != nil {
