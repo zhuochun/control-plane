@@ -65,7 +65,7 @@ func (c *Client) Do(ctx context.Context, method, path string, body any) (json.Ra
 	if err != nil {
 		return nil, &Error{Code: "server_unavailable", Message: fmt.Sprintf("aicp server unavailable; run aicp serve: %v", err)}
 	}
-	defer response.Body.Close()
+	defer func() { _ = response.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(response.Body, 8<<20))
 	if err != nil {
 		return nil, err

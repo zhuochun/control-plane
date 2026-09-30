@@ -15,7 +15,11 @@ func TestSettingsTravelWithRunButNotLiveBrief(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 
 	settings, err := a.Settings(ctx)
@@ -90,7 +94,11 @@ func TestContextLimitsApplyToChangedUTF8FieldsWithoutDiscardingLegacyText(t *tes
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	settings, err := a.Settings(ctx)
 	if err != nil || settings.AgentsMDMaxBytes != AgentsMDMaxBytes || settings.UserMDMaxBytes != UserMDMaxBytes {

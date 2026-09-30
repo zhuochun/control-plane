@@ -51,7 +51,7 @@ func (a *App) ApplyItemAction(ctx context.Context, id string, input ApplyItemAct
 		if item.ReminderTimezone != nil {
 			timezone = *item.ReminderTimezone
 		}
-		changed := true
+		var changed bool
 		switch input.Action.Type {
 		case "set_todo":
 			if input.Action.State != "none" && input.Action.State != "todo" && input.Action.State != "done" {
@@ -199,7 +199,7 @@ func (a *App) ItemHistory(ctx context.Context, id string) ([]ItemVersion, error)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := []ItemVersion{}
 	for rows.Next() {
 		var item ItemVersion

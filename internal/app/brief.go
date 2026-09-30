@@ -53,15 +53,18 @@ func liveBriefCollection(ctx context.Context, tx *sql.Tx, collection string, off
 		for rows.Next() {
 			var item focusHandle
 			if err = rows.Scan(&item.ID, &item.Slug, &item.Title, &item.Revision); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, err
 			}
 			items = append(items, item)
 		}
 		err = rows.Err()
-		rows.Close()
+		closeErr := rows.Close()
 		if err != nil {
 			return nil, err
+		}
+		if closeErr != nil {
+			return nil, closeErr
 		}
 		result["items"] = items
 	case "due_watches", "unresolved_failures":
@@ -88,7 +91,7 @@ func liveBriefCollection(ctx context.Context, tx *sql.Tx, collection string, off
 			var status, message sql.NullString
 			var attempt sql.NullInt64
 			if err = rows.Scan(&item.ID, &item.Slug, &item.State, &item.SourceGeneration, &due, &status, &attempt, &message); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, err
 			}
 			item.NextDueAt = time.UnixMilli(due).UTC()
@@ -111,9 +114,12 @@ func liveBriefCollection(ctx context.Context, tx *sql.Tx, collection string, off
 			items = append(items, item)
 		}
 		err = rows.Err()
-		rows.Close()
+		closeErr := rows.Close()
 		if err != nil {
 			return nil, err
+		}
+		if closeErr != nil {
+			return nil, closeErr
 		}
 		if collection == "due_watches" {
 			for i := range items {
@@ -126,15 +132,18 @@ func liveBriefCollection(ctx context.Context, tx *sql.Tx, collection string, off
 				for interestRows.Next() {
 					var id string
 					if err = interestRows.Scan(&id); err != nil {
-						interestRows.Close()
+						_ = interestRows.Close()
 						return nil, err
 					}
 					items[i].InterestIDs = append(items[i].InterestIDs, id)
 				}
 				err = interestRows.Err()
-				interestRows.Close()
+				closeErr := interestRows.Close()
 				if err != nil {
 					return nil, err
+				}
+				if closeErr != nil {
+					return nil, closeErr
 				}
 			}
 		}
@@ -188,14 +197,14 @@ func (a *App) BriefPage(ctx context.Context, cursor string) (map[string]any, err
 		if err != nil {
 			return nil, err
 		}
-		defer tx.Rollback()
+		defer func() { _ = tx.Rollback() }()
 		return liveBriefCollection(ctx, tx, decoded.Collection, decoded.Offset, a.Now().UTC().UnixMilli())
 	}
 	tx, err := a.Store.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	now := a.Now().UTC()
 	millis := now.UnixMilli()
 	result := map[string]any{"now": now, "consistency": "live", "active_run": nil, "last_run": nil}
@@ -218,15 +227,18 @@ func (a *App) BriefPage(ctx context.Context, cursor string) (map[string]any, err
 	for rows.Next() {
 		item, scanErr := scanItem(rows)
 		if scanErr != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, scanErr
 		}
 		sample = append(sample, compactAttentionItem(attentionItem(item)))
 	}
 	err = rows.Err()
-	rows.Close()
+	closeErr := rows.Close()
 	if err != nil {
 		return nil, err
+	}
+	if closeErr != nil {
+		return nil, closeErr
 	}
 	result["attention"] = map[string]any{"count": attentionCount, "due_reminder_count": reminders, "sample": sample, "sample_only": true}
 	var paused, expired int

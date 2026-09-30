@@ -18,7 +18,11 @@ func TestItemsPageMatchesFullCollectionOrderAndFilters(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	a.Now = func() time.Time { return time.Date(2026, 9, 28, 12, 0, 0, 0, time.UTC) }
 	raw, err := a.CreateInterest(ctx, CreateInterest{RequestID: "page-interest", Title: "Page search interest", InstructionsMD: "Fixture"})
@@ -204,7 +208,11 @@ func TestAllItemKindsShareContentAndOnlyTaskDefaultsTodo(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	if _, err = a.PutItem(ctx, "", PutItem{RequestID: "too-large", DedupeKey: "large", Kind: "report", Title: "Large", Summary: "Too large.", Sources: []Source{}, Report: Report{SchemaVersion: 1, BodyMD: strings.Repeat("x", 513<<10)}}); err == nil {
 		t.Fatal("accepted an item larger than 512 KiB")
@@ -232,7 +240,11 @@ func TestInterestLevelItemDoesNotCountAsWatchCoverage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	raw, err := a.CreateInterest(ctx, CreateInterest{RequestID: "interest-level-interest", Title: "Cross-source context"})
 	if err != nil {

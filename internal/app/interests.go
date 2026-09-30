@@ -118,7 +118,7 @@ func (a *App) Interests(ctx context.Context, states ...string) ([]Interest, erro
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := []Interest{}
 	for rows.Next() {
 		item, err := scanInterest(rows)

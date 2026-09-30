@@ -19,7 +19,11 @@ func TestItemHTTPPagesKeepOrderAndRejectBadCursor(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := app.New(s)
 	for i := 0; i < 5; i++ {
 		_, err = a.PutItem(ctx, "", app.PutItem{RequestID: fmt.Sprintf("http-page-%d", i), DedupeKey: fmt.Sprintf("http-page:%d", i), Kind: "note", Title: fmt.Sprintf("Page item %d", i), Summary: "Paged item", Report: app.Report{SchemaVersion: 1, BodyMD: "Item body"}})
@@ -77,7 +81,11 @@ func TestSettingsHTTPBoundary(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	handler := New(app.New(s), http.NotFoundHandler(), "test")
 	tests := []struct {
 		name, body, origin string
@@ -113,7 +121,11 @@ func TestRejectsNonLoopbackHost(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	request := httptest.NewRequest("GET", "http://attacker.example/api/v1/status", nil)
 	response := httptest.NewRecorder()
 	New(app.New(s), http.NotFoundHandler(), "test").ServeHTTP(response, request)
@@ -127,7 +139,11 @@ func TestOwnerContextHTTPDoesNotClaimRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	handler := New(app.New(s), http.NotFoundHandler(), "test")
 	call := func(body string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest("PUT", "http://127.0.0.1:7331/api/v1/settings/user-context", strings.NewReader(body))
@@ -160,7 +176,11 @@ func TestWatcherConfigurationUsesNewShapeWithoutStartingRun(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	handler := New(app.New(s), http.NotFoundHandler(), "test")
 	call := func(method, path, body string) *httptest.ResponseRecorder {
 		request := httptest.NewRequest(method, "http://127.0.0.1:7331/api/v1"+path, strings.NewReader(body))

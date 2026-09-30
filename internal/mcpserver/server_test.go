@@ -39,13 +39,21 @@ func TestGetBriefOverMCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer serverSession.Close()
+	t.Cleanup(func() {
+		if err := serverSession.Close(); err != nil {
+			t.Errorf("close MCP server session: %v", err)
+		}
+	})
 	client := mcp.NewClient(&mcp.Implementation{Name: "aicp-test", Version: "test"}, nil)
 	clientSession, err := client.Connect(context.Background(), clientTransport, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clientSession.Close()
+	t.Cleanup(func() {
+		if err := clientSession.Close(); err != nil {
+			t.Errorf("close MCP client session: %v", err)
+		}
+	})
 	tools, err := clientSession.ListTools(context.Background(), nil)
 	if err != nil {
 		t.Fatal(err)
@@ -100,7 +108,11 @@ func TestItemLookupAndCapturedAttentionThroughMCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := app.New(s)
 	for _, key := range []string{"matter:A & B", "matter:other"} {
 		if _, err = a.PutItem(ctx, "", app.PutItem{DedupeKey: key, Kind: "task", Title: "Existing matter", Summary: key, Sources: []app.Source{}, InitialTodoState: "todo", Report: app.Report{SchemaVersion: 1, BodyMD: "Keep user state"}}); err != nil {
@@ -114,12 +126,20 @@ func TestItemLookupAndCapturedAttentionThroughMCP(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer serverSession.Close()
+	t.Cleanup(func() {
+		if err := serverSession.Close(); err != nil {
+			t.Errorf("close MCP server session: %v", err)
+		}
+	})
 	clientSession, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil).Connect(ctx, clientTransport, nil)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer clientSession.Close()
+	t.Cleanup(func() {
+		if err := clientSession.Close(); err != nil {
+			t.Errorf("close MCP client session: %v", err)
+		}
+	})
 	call := func(name string, args map[string]any) map[string]any {
 		t.Helper()
 		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})

@@ -159,7 +159,7 @@ func (a *App) Proposals(ctx context.Context, state string) ([]Proposal, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := []Proposal{}
 	for rows.Next() {
 		item, err := scanProposal(rows)

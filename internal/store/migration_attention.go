@@ -72,7 +72,7 @@ func migrationIDs(ctx context.Context, tx *sql.Tx, query string) ([]string, erro
 	for rows.Next() {
 		var id string
 		if err = rows.Scan(&id); err != nil {
-			rows.Close()
+			_ = rows.Close()
 			return nil, err
 		}
 		ids = append(ids, id)

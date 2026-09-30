@@ -154,13 +154,13 @@ OR EXISTS (SELECT 1 FROM watch_interests wi WHERE wi.watch_id=w.id AND wi.intere
 			for rows.Next() {
 				var slug string
 				if err = rows.Scan(&slug); err != nil {
-					rows.Close()
+					_ = rows.Close()
 					return nil, err
 				}
 				effect.AffectedWatchers = append(effect.AffectedWatchers, slug)
 			}
 			if err = rows.Err(); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, err
 			}
 			if err = rows.Close(); err != nil {
@@ -186,13 +186,13 @@ OR EXISTS (SELECT 1 FROM watch_interests wi WHERE wi.watch_id=w.id AND wi.intere
 			for rows.Next() {
 				var slug string
 				if err = rows.Scan(&slug); err != nil {
-					rows.Close()
+					_ = rows.Close()
 					return nil, err
 				}
 				effect.OverlappingWatchers = append(effect.OverlappingWatchers, slug)
 			}
 			if err = rows.Err(); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, err
 			}
 			if err = rows.Close(); err != nil {
@@ -209,7 +209,7 @@ func (a *App) PreviewConfigPlan(ctx context.Context, plan ConfigPlan) (ConfigPre
 	if err != nil {
 		return ConfigPreview{}, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	seq, err := configSequence(ctx, tx)
 	if err != nil {
 		return ConfigPreview{}, err

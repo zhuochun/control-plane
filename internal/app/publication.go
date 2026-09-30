@@ -223,7 +223,7 @@ func (a *App) WatchResults(ctx context.Context, runID string) ([]WatchResult, er
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	results := []WatchResult{}
 	for rows.Next() {
 		var item WatchResult

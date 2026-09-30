@@ -9,6 +9,7 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
+	"log"
 	"os"
 	"path/filepath"
 	"sort"
@@ -80,10 +81,14 @@ func main() {
 	ctx := context.Background()
 	s, err := store.Open(ctx, absolute)
 	must(err)
-	defer s.Close()
+	defer func() {
+		if err := s.Close(); err != nil {
+			log.Printf("close store: %v", err)
+		}
+	}()
 	tx, err := s.DB.BeginTx(ctx, nil)
 	must(err)
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	base := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC).UnixMilli()
 	now := time.Date(2026, 9, 28, 0, 0, 0, 0, time.UTC).UnixMilli()
 	interest := prepare(tx, `INSERT INTO interests(id,title,instructions_md,state,revision,created_at,updated_at,slug) VALUES(?,?,?,?,1,?,?,?)`)

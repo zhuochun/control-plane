@@ -14,7 +14,11 @@ func TestConfigPlanPreviewApplyAndReplay(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	plan := ConfigPlan{Operations: []ConfigOperation{
 		{TargetType: "interest", Operation: "create", Payload: json.RawMessage(`{"slug":"delivery-risk","title":"Delivery risk","instructions_md":"Watch risk"}`)},

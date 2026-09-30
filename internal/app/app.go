@@ -59,7 +59,7 @@ func (a *App) mutate(ctx context.Context, requestID, operation string, request a
 	if err != nil {
 		return nil, err
 	}
-	defer tx.Rollback()
+	defer func() { _ = tx.Rollback() }()
 	var existingHash string
 	var storedResponse string
 	var response json.RawMessage

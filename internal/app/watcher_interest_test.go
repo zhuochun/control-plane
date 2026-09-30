@@ -15,7 +15,11 @@ func TestBroadAndExplicitWatchersKeepIndependentCheckpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	now := time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC)
 	a.Now = func() time.Time { return now }
@@ -130,7 +134,11 @@ func TestUserItemWithoutLinkOrWithDateOnlySource(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	base := PutItem{DedupeKey: "user:idea", Kind: "task", Title: "Draft idea", Summary: "Think this through", Sources: []Source{}, Report: Report{SchemaVersion: 1, BodyMD: "Personal context"}}
 	raw, err := a.PutItem(ctx, "", base)
@@ -171,7 +179,11 @@ func TestAgentItemWithoutWatcherDoesNotClaimAttention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	raw, err := a.CreateInterest(ctx, CreateInterest{Title: "Review", Slug: "review"})
 	if err != nil {
@@ -223,7 +235,11 @@ func TestOneMatterAddsEvidenceAndInterestReasonWithoutLosingState(t *testing.T) 
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	now := time.Date(2026, 9, 27, 0, 0, 0, 0, time.UTC)
 	a.Now = func() time.Time { return now }
