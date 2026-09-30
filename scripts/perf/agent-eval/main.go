@@ -89,7 +89,11 @@ func main() {
 	ctx := context.Background()
 	s, err := store.Open(ctx, directory)
 	must(err)
-	defer s.Close()
+	defer func() {
+		if err := s.Close(); err != nil {
+			log.Printf("close store: %v", err)
+		}
+	}()
 	a := app.New(s)
 	// A bounded but noticeable owner context makes repeated continuations visible.
 	agents := "# Agent guidance\n" + string(bytes.Repeat([]byte("Keep evidence and coverage precise.\n"), 80))
@@ -149,11 +153,19 @@ func main() {
 	serverTransport, clientTransport := mcp.NewInMemoryTransports()
 	serverSession, err := mcpserver.New(api.URL, "agent-eval").Connect(ctx, serverTransport, nil)
 	must(err)
-	defer serverSession.Close()
+	defer func() {
+		if err := serverSession.Close(); err != nil {
+			log.Printf("close MCP server session: %v", err)
+		}
+	}()
 	client := mcp.NewClient(&mcp.Implementation{Name: "aicp-perf", Version: "1"}, nil)
 	clientSession, err := client.Connect(ctx, clientTransport, nil)
 	must(err)
-	defer clientSession.Close()
+	defer func() {
+		if err := clientSession.Close(); err != nil {
+			log.Printf("close MCP client session: %v", err)
+		}
+	}()
 	tools, err := clientSession.ListTools(ctx, nil)
 	must(err)
 	toolJSON, err := json.Marshal(tools.Tools)

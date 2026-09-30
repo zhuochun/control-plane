@@ -86,9 +86,8 @@ exercises two run cycles through the public CLI. Stop another local aicp server
 before either check if it owns that port.
 
 `scripts/check-go.ps1` is the focused Go quality gate. It checks the pinned
-golangci-lint version, gofmt/goimports output, and the configured standard
-Staticcheck, Go vet, and targeted readability rules. `errcheck` is deferred until
-the existing unchecked results are resolved. Install the version in
+golangci-lint version, gofmt/goimports output, and the configured standard,
+Staticcheck, Go vet, `errcheck`, and targeted readability rules. Install the version in
 `.golangci-lint-version` using the
 [official local installation instructions](https://golangci-lint.run/docs/welcome/install/local/)
 before running it. `scripts/verify.ps1` is the complete

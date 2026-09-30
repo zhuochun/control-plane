@@ -17,7 +17,11 @@ func TestQuietRunKeepsLargeAttentionOptionalAndCaptured(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	now := time.Date(2026, 9, 30, 1, 0, 0, 0, time.UTC)
 	a.Now = func() time.Time { return now }
@@ -87,7 +91,11 @@ func TestBriefFailuresAndRunCoverageFollowSourceGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	now := time.Date(2026, 9, 30, 1, 0, 0, 0, time.UTC)
 	a.Now = func() time.Time { return now }
@@ -96,13 +104,17 @@ func TestBriefFailuresAndRunCoverageFollowSourceGeneration(t *testing.T) {
 		t.Fatal(err)
 	}
 	var interest Interest
-	json.Unmarshal(interestRaw, &interest)
+	if err = json.Unmarshal(interestRaw, &interest); err != nil {
+		t.Fatal(err)
+	}
 	raw, err := a.CreateWatch(ctx, CreateWatch{MatchingPolicy: "explicit", InterestIDs: []string{interest.ID}, Source: WatchSource{Kind: "fixture", Locator: "A"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	var watch Watch
-	json.Unmarshal(raw, &watch)
+	if err = json.Unmarshal(raw, &watch); err != nil {
+		t.Fatal(err)
+	}
 	started, err := a.StartRun(ctx, StartRun{RequestID: "failure-run"})
 	if err != nil {
 		t.Fatal(err)
@@ -113,7 +125,9 @@ func TestBriefFailuresAndRunCoverageFollowSourceGeneration(t *testing.T) {
 			Watches []SelectedWatch `json:"watches"`
 		} `json:"context"`
 	}
-	json.Unmarshal(started, &packet)
+	if err = json.Unmarshal(started, &packet); err != nil {
+		t.Fatal(err)
+	}
 	limitation := strings.Repeat("unread source ", 70)
 	if _, err = a.SubmitWatchFindings(ctx, packet.Run.ID, watch.ID, SubmitWatchFindings{ExpectedWatchRevision: watch.Revision, Status: "partial", Error: limitation, Coverage: Coverage{ObservedThrough: now, Limitations: []string{"Last page unread"}}}); err != nil {
 		t.Fatal(err)
@@ -147,7 +161,9 @@ func TestBriefFailuresAndRunCoverageFollowSourceGeneration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	json.Unmarshal(started, &packet)
+	if err = json.Unmarshal(started, &packet); err != nil {
+		t.Fatal(err)
+	}
 	attempt := packet.Context.Watches[0].PreviousAttempt
 	if attempt == nil || attempt.Status != "partial" || attempt.Error != limitation || len(attempt.Coverage.Limitations) != 1 {
 		t.Fatalf("retry lacks full captured limitation: %+v", attempt)
@@ -188,7 +204,11 @@ func TestLiveBriefHandlesPageWithoutClaimingOrAcknowledging(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	for i := 0; i < 22; i++ {
 		if _, err = a.CreateInterest(ctx, CreateInterest{Title: fmt.Sprintf("Focus %d", i)}); err != nil {
@@ -202,7 +222,9 @@ func TestLiveBriefHandlesPageWithoutClaimingOrAcknowledging(t *testing.T) {
 	var packet struct {
 		Run Run `json:"run"`
 	}
-	json.Unmarshal(started, &packet)
+	if err = json.Unmarshal(started, &packet); err != nil {
+		t.Fatal(err)
+	}
 	brief, err := a.Brief(ctx)
 	if err != nil {
 		t.Fatal(err)
@@ -243,7 +265,9 @@ func TestVersionSixStartReceiptReplaysNewCapturedContract(t *testing.T) {
 	}
 	defer func() {
 		if s != nil {
-			s.Close()
+			if err := s.Close(); err != nil {
+				t.Errorf("close store: %v", err)
+			}
 		}
 	}()
 	a := New(s)

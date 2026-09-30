@@ -568,7 +568,7 @@ func (a *App) Items(ctx context.Context, filter ItemFilters) ([]Item, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := []Item{}
 	for rows.Next() {
 		item, err := scanItem(rows)
@@ -612,7 +612,7 @@ func (a *App) ItemsPage(ctx context.Context, filter ItemFilters, afterID string,
 	if err != nil {
 		return nil, false, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]Item, 0, limit+1)
 	for rows.Next() {
 		item, scanErr := scanItem(rows)

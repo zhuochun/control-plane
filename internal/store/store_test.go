@@ -67,7 +67,11 @@ func TestAttentionSnapshotMigrationFromVersion5(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer opened.Close()
+	t.Cleanup(func() {
+		if err := opened.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	var version int64
 	if err = opened.DB.QueryRowContext(ctx, `SELECT max(version_id) FROM goose_db_version WHERE is_applied=1`).Scan(&version); err != nil || version != 7 {
 		t.Fatalf("schema version %d: %v", version, err)
@@ -157,7 +161,11 @@ func TestWatcherInterestMigrationPreservesHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer store.Close()
+	t.Cleanup(func() {
+		if err := store.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	var policy, cursor, slug string
 	if err = store.DB.QueryRowContext(ctx, "SELECT matching_policy,cursor,slug FROM watches WHERE id='w-1'").Scan(&policy, &cursor, &slug); err != nil {
 		t.Fatal(err)
@@ -234,7 +242,11 @@ func TestPersistenceAndExclusiveOwnership(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer reopened.Close()
+	t.Cleanup(func() {
+		if err := reopened.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	var timezone string
 	if err := reopened.DB.QueryRowContext(ctx, "SELECT value FROM settings WHERE key = 'timezone'").Scan(&timezone); err != nil {
 		t.Fatal(err)

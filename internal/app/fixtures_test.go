@@ -26,7 +26,11 @@ func TestSharedReportFixturesMatchBackendValidation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	compiler := jsonschema.NewCompiler()
 	for _, name := range []string{"report-v1.schema.json", "watch-result-v1.schema.json"} {

@@ -110,7 +110,11 @@ GETTING_STARTED.md for the full agent-assisted path.`, SilenceUsage: true, Silen
 		if err != nil {
 			return err
 		}
-		defer s.Close()
+		defer func() {
+			if err := s.Close(); err != nil {
+				slog.Error("close store", "error", err)
+			}
+		}()
 		listener, err := net.Listen("tcp", "127.0.0.1:7331")
 		if err != nil {
 			return fmt.Errorf("listen on 127.0.0.1:7331 (another service may be using the port): %w", err)
@@ -168,7 +172,9 @@ GETTING_STARTED.md for the full agent-assisted path.`, SilenceUsage: true, Silen
 			browser = exec.Command("xdg-open", server)
 		}
 		if err := browser.Run(); err != nil {
-			fmt.Fprintln(cmd.OutOrStdout(), server)
+			if _, writeErr := fmt.Fprintln(cmd.OutOrStdout(), server); writeErr != nil {
+				return writeErr
+			}
 		}
 		return nil
 	}})

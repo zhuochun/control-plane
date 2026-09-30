@@ -19,7 +19,11 @@ func TestRunsPageMatchesFullHistory(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	for i := 0; i < 7; i++ {
 		_, err = s.DB.ExecContext(ctx, `INSERT INTO runs(id,runner_label,status,started_at,ended_at,lease_expires_at,selected_watches,after_seq,through_seq,context_snapshot) VALUES(?, 'fixture', 'completed', ?, ?, 0, '[]', 0, 0, '{}')`, fmt.Sprintf("run-%d", i), i/2, i/2)
 		if err != nil {
@@ -63,7 +67,11 @@ func TestRunDetailProjectsRelatedItemsWithoutChangingCapture(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	fullSummary := strings.Repeat("Full related Item summary. ", 30)
 	selected, err := json.Marshal([]SelectedWatch{{ID: "watch", RelatedItems: []CapturedAttentionItem{{ID: "item", Title: "Related", Summary: fullSummary}}}})
 	if err != nil {
@@ -107,7 +115,11 @@ func TestRunSelectionAndChangeAcknowledgement(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	now := time.Date(2026, 9, 15, 2, 0, 0, 0, time.UTC)
 	a.Now = func() time.Time { return now }
@@ -221,7 +233,11 @@ func TestAbandonRunPreservesSubmittedCoverageAndReleasesSlot(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	now := time.Date(2026, 9, 23, 2, 0, 0, 0, time.UTC)
 	a.Now = func() time.Time { return now }
@@ -338,7 +354,11 @@ func TestStartRunNormalizesInterestAndAttentionContext(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	now := time.Date(2026, 9, 16, 1, 0, 0, 0, time.UTC)
 	a.Now = func() time.Time { return now }
@@ -435,7 +455,11 @@ func TestRunContextContinuationReturnsRemainingInterests(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	for index := 0; index < contextPageSize+1; index++ {
 		if _, err = a.CreateInterest(ctx, CreateInterest{RequestID: fmt.Sprintf("interest-%d", index), Title: fmt.Sprintf("Interest %d", index)}); err != nil {
@@ -544,7 +568,11 @@ func TestAcknowledgementSincePreviousRunIsAChangeNotAttention(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	raw, err := a.PutItem(ctx, "", PutItem{RequestID: "item-before-ack", DedupeKey: "ack-flow", ExpectedContentVersion: 0, Kind: "note", Title: "Already read", Summary: "No open task", Sources: []Source{}, Report: Report{SchemaVersion: 1, BodyMD: "Body"}})
 	if err != nil {
@@ -585,7 +613,11 @@ func TestRunChangeContextUsesBoundedContinuationPages(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	for index := 0; index < contextPageSize+1; index++ {
 		if _, err = a.CreateInterest(ctx, CreateInterest{RequestID: fmt.Sprintf("change-interest-%d", index), Title: fmt.Sprintf("Change %d", index)}); err != nil {

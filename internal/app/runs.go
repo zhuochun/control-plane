@@ -164,7 +164,7 @@ func (a *App) Runs(ctx context.Context) ([]RunSummary, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := []RunSummary{}
 	for rows.Next() {
 		item, err := scanRunSummary(rows)
@@ -200,7 +200,7 @@ func (a *App) RunsPage(ctx context.Context, afterID string, limit int) ([]RunSum
 	if err != nil {
 		return nil, false, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := make([]RunSummary, 0, limit+1)
 	for rows.Next() {
 		run, scanErr := scanRunSummary(rows)
@@ -272,7 +272,7 @@ FROM watches w WHERE w.state='active' AND (w.valid_until IS NULL OR w.valid_unti
 	if err != nil {
 		return nil, 0, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	selected := []SelectedWatch{}
 	for rows.Next() {
 		var item SelectedWatch
@@ -308,13 +308,13 @@ ORDER BY i.id`, selected[index].MatchingPolicy, selected[index].ID)
 		for interestRows.Next() {
 			var match InterestMatch
 			if err = interestRows.Scan(&match.ID, &match.Revision); err != nil {
-				interestRows.Close()
+				_ = interestRows.Close()
 				return nil, 0, err
 			}
 			selected[index].Interests = append(selected[index].Interests, match)
 		}
 		if err = interestRows.Err(); err != nil {
-			interestRows.Close()
+			_ = interestRows.Close()
 			return nil, 0, err
 		}
 		if err = interestRows.Close(); err != nil {
@@ -367,7 +367,7 @@ func activeInterests(ctx context.Context, db rowsQuerier) ([]Interest, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := []Interest{}
 	for rows.Next() {
 		item, err := scanInterest(rows)
@@ -384,7 +384,7 @@ func attentionItems(ctx context.Context, db rowsQuerier, now int64) ([]CapturedA
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := []CapturedAttentionItem{}
 	for rows.Next() {
 		item, err := scanItem(rows)
@@ -626,7 +626,7 @@ func (a *App) FinishRun(ctx context.Context, id string, input FinishRun) (json.R
 			var status string
 			var count int
 			if err = rows.Scan(&status, &count); err != nil {
-				rows.Close()
+				_ = rows.Close()
 				return nil, err
 			}
 			switch status {
@@ -637,7 +637,13 @@ func (a *App) FinishRun(ctx context.Context, id string, input FinishRun) (json.R
 			case "failed":
 			}
 		}
-		rows.Close()
+		if err = rows.Err(); err != nil {
+			_ = rows.Close()
+			return nil, err
+		}
+		if err = rows.Close(); err != nil {
+			return nil, err
+		}
 		total := len(run.SelectedWatches)
 		resultRows, err := tx.QueryContext(ctx, `SELECT watch_id FROM watch_results WHERE run_id=?`, id)
 		if err != nil {
@@ -646,16 +652,18 @@ func (a *App) FinishRun(ctx context.Context, id string, input FinishRun) (json.R
 		for resultRows.Next() {
 			var watchID string
 			if err = resultRows.Scan(&watchID); err != nil {
-				resultRows.Close()
+				_ = resultRows.Close()
 				return nil, err
 			}
 			covered[watchID] = true
 		}
 		if err = resultRows.Err(); err != nil {
-			resultRows.Close()
+			_ = resultRows.Close()
 			return nil, err
 		}
-		resultRows.Close()
+		if err = resultRows.Close(); err != nil {
+			return nil, err
+		}
 		missingWatches := []string{}
 		for _, selected := range run.SelectedWatches {
 			if !covered[selected.ID] {
@@ -774,7 +782,7 @@ func eventsPage(ctx context.Context, db rowsQuerier, after, through int64, curso
 	if err != nil {
 		return nil, "", err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := []Event{}
 	for rows.Next() {
 		var item Event
@@ -814,7 +822,7 @@ func eventsBetween(ctx context.Context, db rowsQuerier, after, through int64) ([
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := []Event{}
 	for rows.Next() {
 		var item Event
@@ -904,7 +912,7 @@ func (a *App) OperationalHealth(ctx context.Context) (map[string]any, error) {
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	watches := []WatchHealth{}
 	dueCount := 0
 	now := a.Now().UTC()

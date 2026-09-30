@@ -92,7 +92,11 @@ func main() {
 	ctx := context.Background()
 	s, err := store.Open(ctx, directory)
 	must(err)
-	defer s.Close()
+	defer func() {
+		if err := s.Close(); err != nil {
+			log.Printf("close store: %v", err)
+		}
+	}()
 	a := app.New(s)
 	agents := "# Agent guidance\n" + string(bytes.Repeat([]byte("Keep evidence and coverage precise.\n"), 80))
 	user := "# Owner context\n" + string(bytes.Repeat([]byte("Prioritize current source-backed matters.\n"), 80))

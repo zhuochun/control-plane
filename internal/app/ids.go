@@ -42,12 +42,12 @@ func resolveID(ctx context.Context, db rowsQuerier, table, input string) (string
 		}
 		if rows.Next() {
 			if scanErr := rows.Scan(&id); scanErr != nil {
-				rows.Close()
+				_ = rows.Close()
 				return "", scanErr
 			}
 		}
 		if rowErr := rows.Err(); rowErr != nil {
-			rows.Close()
+			_ = rows.Close()
 			return "", rowErr
 		}
 		if closeErr := rows.Close(); closeErr != nil {
@@ -58,11 +58,19 @@ func resolveID(ctx context.Context, db rowsQuerier, table, input string) (string
 		}
 	}
 	for _, character := range input {
-		if !(character >= '0' && character <= '9') && !(character >= 'a' && character <= 'f') && !(character >= 'A' && character <= 'F') && character != '-' {
-			return "", &Error{Status: 404, Code: "not_found", Message: "Record not found"}
+		if isHexOrHyphen(character) {
+			continue
 		}
+		return "", &Error{Status: 404, Code: "not_found", Message: "Record not found"}
 	}
 	return resolveIDRows(ctx, db, table, input)
+}
+
+func isHexOrHyphen(character rune) bool {
+	return character == '-' ||
+		(character >= '0' && character <= '9') ||
+		(character >= 'a' && character <= 'f') ||
+		(character >= 'A' && character <= 'F')
 }
 
 func resolveIDRows(ctx context.Context, db rowsQuerier, table, input string) (string, error) {
@@ -70,7 +78,7 @@ func resolveIDRows(ctx context.Context, db rowsQuerier, table, input string) (st
 	if err != nil {
 		return "", err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	matches := []string{}
 	for rows.Next() {
 		var id string

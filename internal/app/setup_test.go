@@ -15,7 +15,11 @@ func TestSetupIsDerivedFromCurrentConfiguration(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	check := func(want SetupStatus) {
 		t.Helper()
@@ -76,7 +80,11 @@ func TestSetUserContextPreservesOtherSettings(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	agents := "# Custom agent note"
 	if _, err = a.SetSettings(ctx, SetSettings{Timezone: "Asia/Singapore", AgentsMD: &agents}); err != nil {

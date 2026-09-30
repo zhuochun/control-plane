@@ -16,7 +16,11 @@ func TestWatchPublicationAdvancesCoverageAndPreservesHumanState(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	now := time.Date(2026, 9, 15, 3, 0, 0, 0, time.UTC)
 	a.Now = func() time.Time { return now }
@@ -157,7 +161,11 @@ func TestMixedAndPartialResultsKeepTruthfulCheckpoints(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	now := time.Date(2026, 9, 15, 6, 0, 0, 0, time.UTC)
 	a.Now = func() time.Time { return now }

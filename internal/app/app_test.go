@@ -3,8 +3,9 @@ package app
 import (
 	"context"
 	"errors"
-	"github.com/zhuochun/control-plane/internal/store"
 	"testing"
+
+	"github.com/zhuochun/control-plane/internal/store"
 )
 
 func TestSettingRetryDoesNotOverwriteLaterEdit(t *testing.T) {
@@ -13,7 +14,11 @@ func TestSettingRetryDoesNotOverwriteLaterEdit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer s.Close()
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
 	a := New(s)
 	first := SetSettings{RequestID: "first", Timezone: "Asia/Singapore"}
 	original, err := a.SetSettings(ctx, first)

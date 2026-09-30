@@ -128,7 +128,7 @@ func (a *App) Watches(ctx context.Context, interestID string, states ...string) 
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+	defer func() { _ = rows.Close() }()
 	items := []Watch{}
 	for rows.Next() {
 		item, err := scanWatch(rows)

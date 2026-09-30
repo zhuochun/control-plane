@@ -170,13 +170,13 @@ func configurationCommand(name, path string, send request) *cobra.Command {
 }
 
 func commandFile(cmd *cobra.Command, path string) (json.RawMessage, error) {
-	var source io.Reader = cmd.InOrStdin()
+	source := cmd.InOrStdin()
 	if path != "-" {
 		file, err := os.Open(path)
 		if err != nil {
 			return nil, err
 		}
-		defer file.Close()
+		defer func() { _ = file.Close() }()
 		source = file
 	}
 	data, err := io.ReadAll(io.LimitReader(source, (4<<20)+1))
