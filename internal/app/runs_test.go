@@ -134,36 +134,36 @@ func TestRunSelectionAndChangeAcknowledgement(t *testing.T) {
 			After    int64             `json:"after_seq"`
 			Through  int64             `json:"through_seq"`
 			Contexts map[string]string `json:"contexts"`
-		} `json:"brief"`
+		} `json:"context"`
 	}
 	if err = json.Unmarshal(raw, &started); err != nil {
 		t.Fatal(err)
 	}
-	if len(started.Brief.Watches) != 1 || started.Brief.Watches[0].ID != watch.ID || started.Brief.Watches[0].IntervalSeconds != 7200 || started.Brief.Watches[0].LookbackSeconds != 604800 || started.Brief.Through != 2 {
+	if len(started.Brief.Watches) != 1 || started.Brief.Watches[0].ID != watch.ID || started.Brief.Watches[0].IntervalSeconds != 7200 || started.Brief.Watches[0].LookbackSeconds != 604800 || started.Run.ThroughSeq != 2 {
 		t.Fatalf("bad captured brief: %+v", started)
 	}
 	if started.Brief.Contexts["AGENTS.md"] == "" || started.Brief.Contexts["USER.md"] == "" {
 		t.Fatalf("agent contexts missing from captured brief: %+v", started.Brief.Contexts)
 	}
 	history, err := a.Runs(ctx)
-	if err != nil || len(history) != 1 || len(history[0].SelectedWatches) != 1 {
+	if err != nil || len(history) != 1 || history[0].SelectedCount != 1 {
 		t.Fatalf("run history omitted selected Watches: %+v %v", history, err)
 	}
 	historyJSON, err := json.Marshal(history)
-	if err != nil || !strings.Contains(string(historyJSON), `"selected_watches"`) {
+	if err != nil || strings.Contains(string(historyJSON), `"selected_watches"`) || !strings.Contains(string(historyJSON), `"selected_count":1`) {
 		t.Fatalf("run history JSON omitted selected Watches: %s %v", historyJSON, err)
 	}
 	if _, err = a.StartRun(ctx, StartRun{RequestID: "overlap", RunnerLabel: "other"}); err == nil {
 		t.Fatal("allowed overlapping run")
 	}
-	changes, err := a.Changes(ctx, started.Brief.After, started.Brief.Through)
+	changes, err := a.Changes(ctx, started.Run.AfterSeq, started.Run.ThroughSeq)
 	if err != nil || len(changes) != 2 {
 		t.Fatalf("human changes missing: %d %v", len(changes), err)
 	}
 	if _, err = a.SubmitWatchFindings(ctx, started.Run.ID, watch.ID, SubmitWatchFindings{RequestID: "failed-coverage", ExpectedWatchRevision: watch.Revision, Status: "failed", Error: "source unavailable", Coverage: Coverage{CursorBefore: nil, ObservedThrough: now, Limitations: []string{"source unavailable"}}}); err != nil {
 		t.Fatal("recorded failed Watch coverage:", err)
 	}
-	if _, err = a.FinishRun(ctx, started.Run.ID, FinishRun{RequestID: "finish-failed", Summary: "Source unavailable", AckThroughSeq: &started.Brief.Through}); err == nil {
+	if _, err = a.FinishRun(ctx, started.Run.ID, FinishRun{RequestID: "finish-failed", Summary: "Source unavailable", AckThroughSeq: &started.Run.ThroughSeq}); err == nil {
 		t.Fatal("failed run acknowledged changes")
 	}
 	raw, err = a.FinishRun(ctx, started.Run.ID, FinishRun{RequestID: "finish", Summary: "Source unavailable"})
@@ -184,10 +184,10 @@ func TestRunSelectionAndChangeAcknowledgement(t *testing.T) {
 		Run   Run `json:"run"`
 		Brief struct {
 			Through int64 `json:"through_seq"`
-		} `json:"brief"`
+		} `json:"context"`
 	}
 	_ = json.Unmarshal(raw, &second)
-	if _, err = a.FinishRun(ctx, second.Run.ID, FinishRun{RequestID: "finish-empty", Summary: "Changes consumed", AckThroughSeq: &second.Brief.Through}); err != nil {
+	if _, err = a.FinishRun(ctx, second.Run.ID, FinishRun{RequestID: "finish-empty", Summary: "Changes consumed", AckThroughSeq: &second.Run.ThroughSeq}); err != nil {
 		t.Fatal(err)
 	}
 	var acknowledged string
@@ -252,7 +252,7 @@ func TestAbandonRunPreservesSubmittedCoverageAndReleasesSlot(t *testing.T) {
 		Brief struct {
 			Through int64           `json:"through_seq"`
 			Watches []SelectedWatch `json:"watches"`
-		} `json:"brief"`
+		} `json:"context"`
 	}
 	if err = json.Unmarshal(raw, &started); err != nil {
 		t.Fatal(err)
@@ -312,15 +312,15 @@ func TestAbandonRunPreservesSubmittedCoverageAndReleasesSlot(t *testing.T) {
 		t.Fatal(err)
 	}
 	var next struct {
+		Run   Run `json:"run"`
 		Brief struct {
 			Watches []SelectedWatch `json:"watches"`
-			After   int64           `json:"after_seq"`
-		} `json:"brief"`
+		} `json:"context"`
 	}
 	if err = json.Unmarshal(raw, &next); err != nil {
 		t.Fatal(err)
 	}
-	if len(next.Brief.Watches) != 1 || next.Brief.Watches[0].ID != watches[1].ID || next.Brief.After != 0 {
+	if len(next.Brief.Watches) != 1 || next.Brief.Watches[0].ID != watches[1].ID || next.Run.AfterSeq != 0 {
 		t.Fatalf("next run lost due Watch or changes: %+v", next.Brief)
 	}
 	health, err = a.OperationalHealth(ctx)
@@ -381,13 +381,24 @@ func TestStartRunNormalizesInterestAndAttentionContext(t *testing.T) {
 			Attention []AttentionItem   `json:"attention_items"`
 			Watches   []SelectedWatch   `json:"watches"`
 			Contexts  map[string]string `json:"contexts"`
-		} `json:"brief"`
+			Available map[string]struct {
+				Cursor string `json:"cursor"`
+			} `json:"available"`
+		} `json:"context"`
 	}
 	if err = json.Unmarshal(raw, &packet); err != nil {
 		t.Fatal(err)
 	}
-	if len(packet.Brief.Interests) != 2 || len(packet.Brief.Attention) != 1 || len(packet.Brief.Watches) != 1 || packet.Brief.Attention[0].Title != "Unwatched attention" {
+	if len(packet.Brief.Interests) != 1 || len(packet.Brief.Attention) != 0 || len(packet.Brief.Watches) != 1 {
 		t.Fatalf("normalized packet omitted context: %+v", packet.Brief)
+	}
+	optional, err := a.BriefPage(ctx, packet.Brief.Available["attention"].Cursor)
+	if err != nil {
+		t.Fatal(err)
+	}
+	packet.Brief.Attention = optional["items"].([]AttentionItem)
+	if len(packet.Brief.Attention) != 1 || packet.Brief.Attention[0].Title != "Unwatched attention" || optional["consistency"] != "captured" {
+		t.Fatalf("optional captured Attention: %#v", optional)
 	}
 	if len(packet.Brief.Attention[0].Summary) > attentionSummaryMaxBytes || !slices.Contains(packet.Brief.Attention[0].TruncatedFields, "summary") {
 		t.Fatalf("long summary was not marked and capped: %+v", packet.Brief.Attention[0])
@@ -399,7 +410,7 @@ func TestStartRunNormalizesInterestAndAttentionContext(t *testing.T) {
 	if err = s.DB.QueryRowContext(ctx, `SELECT response FROM command_receipts WHERE request_id='context-run'`).Scan(&receipt); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(captured, longSummary) || !strings.Contains(receipt, longSummary) || strings.Contains(captured, "truncated_fields") || strings.Contains(receipt, "truncated_fields") {
+	if !strings.Contains(captured, longSummary) || strings.Contains(receipt, longSummary) || !strings.Contains(receipt, `"context"`) || strings.Contains(captured, "truncated_fields") {
 		t.Fatal("Run snapshot or receipt stored output truncation")
 	}
 	replay, replayErr := a.StartRun(ctx, StartRun{RequestID: "context-run"})
@@ -431,7 +442,10 @@ func TestRunContextContinuationReturnsRemainingInterests(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	raw, err := a.StartRun(ctx, StartRun{RequestID: "continuation-run", WatchIDs: Field[[]string]{Set: true, Value: []string{}}})
+	if _, err = a.CreateWatch(ctx, CreateWatch{RequestID: "continuation-watch", MatchingPolicy: "broad", Source: WatchSource{Kind: "fixture", Locator: "all-interests"}}); err != nil {
+		t.Fatal(err)
+	}
+	raw, err := a.StartRun(ctx, StartRun{RequestID: "continuation-run"})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -439,7 +453,7 @@ func TestRunContextContinuationReturnsRemainingInterests(t *testing.T) {
 		Brief struct {
 			Interests     []Interest     `json:"interests"`
 			Continuations map[string]any `json:"continuations"`
-		} `json:"brief"`
+		} `json:"context"`
 	}
 	if err = json.Unmarshal(raw, &packet); err != nil {
 		t.Fatal(err)
@@ -555,7 +569,7 @@ func TestAcknowledgementSincePreviousRunIsAChangeNotAttention(t *testing.T) {
 		Brief struct {
 			Attention []AttentionItem `json:"attention_items"`
 			Changes   []Event         `json:"changes"`
-		} `json:"brief"`
+		} `json:"context"`
 	}
 	if err = json.Unmarshal(raw, &packet); err != nil {
 		t.Fatal(err)
@@ -584,20 +598,23 @@ func TestRunChangeContextUsesBoundedContinuationPages(t *testing.T) {
 		t.Fatal(err)
 	}
 	var packet struct {
+		Run   Run `json:"run"`
 		Brief struct {
-			After      int64   `json:"after_seq"`
-			Through    int64   `json:"through_seq"`
-			Changes    []Event `json:"changes"`
-			NextCursor string  `json:"changes_next_cursor"`
-		} `json:"brief"`
+			After         int64             `json:"after_seq"`
+			Through       int64             `json:"through_seq"`
+			Changes       []Event           `json:"changes"`
+			NextCursor    string            `json:"changes_next_cursor"`
+			Continuations map[string]string `json:"continuations"`
+		} `json:"context"`
 	}
 	if err = json.Unmarshal(raw, &packet); err != nil {
 		t.Fatal(err)
 	}
+	packet.Brief.NextCursor = packet.Brief.Continuations["changes"]
 	if len(packet.Brief.Changes) != contextPageSize || packet.Brief.NextCursor == "" {
 		t.Fatalf("expected a bounded change page with continuation: %+v", packet.Brief)
 	}
-	page, err := a.ChangesPage(ctx, packet.Brief.After, packet.Brief.Through, packet.Brief.NextCursor, contextPageSize)
+	page, err := a.ChangesPage(ctx, packet.Run.AfterSeq, packet.Run.ThroughSeq, packet.Brief.NextCursor, contextPageSize)
 	if err != nil {
 		t.Fatal(err)
 	}

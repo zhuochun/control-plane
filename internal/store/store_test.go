@@ -69,7 +69,7 @@ func TestAttentionSnapshotMigrationFromVersion5(t *testing.T) {
 	}
 	defer opened.Close()
 	var version int64
-	if err = opened.DB.QueryRowContext(ctx, `SELECT max(version_id) FROM goose_db_version WHERE is_applied=1`).Scan(&version); err != nil || version != 6 {
+	if err = opened.DB.QueryRowContext(ctx, `SELECT max(version_id) FROM goose_db_version WHERE is_applied=1`).Scan(&version); err != nil || version != 7 {
 		t.Fatalf("schema version %d: %v", version, err)
 	}
 	var savedContext, savedWatches, status string
@@ -110,7 +110,7 @@ func TestAttentionSnapshotMigrationFromVersion5(t *testing.T) {
 	if err = opened.DB.QueryRowContext(ctx, `SELECT response FROM command_receipts WHERE request_id='start-r-1'`).Scan(&savedReceipt); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(savedReceipt, "acknowledged_content_version") || strings.Contains(savedReceipt, "state_version") || strings.Contains(savedReceipt, "truncated_fields") || strings.Contains(savedReceipt, "unacknowledged") || !strings.Contains(savedReceipt, oldItem["summary"].(string)) {
+	if strings.Contains(savedReceipt, "acknowledged_content_version") || strings.Contains(savedReceipt, "state_version") || strings.Contains(savedReceipt, "truncated_fields") || strings.Contains(savedReceipt, "unacknowledged") || strings.Contains(savedReceipt, `"brief"`) || !strings.Contains(savedReceipt, `"context"`) || strings.Contains(savedReceipt, `"related_items"`) {
 		t.Fatalf("start Run retry receipt was not converted: %s", savedReceipt)
 	}
 }

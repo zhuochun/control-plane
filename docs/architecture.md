@@ -100,6 +100,12 @@ measurement, not part of `scripts/verify.ps1`.
 For agent packet costs and progressive detail reads, see the
 [agent evaluation spec](specs/20260928-agent-efficiency-evaluation-spec.md) and
 [first reference baseline](perf/20260928-agent-efficiency-baseline.md).
+The required Run context, live brief, and compact history contract is recorded in the
+[Run context and brief spec](specs/20260930-run-context-and-brief-spec.md).
+It compares former and current returns, including optional captured Attention
+and bounded lookup before reconciliation.
+The [2026-09-30 evaluation](perf/20260930-run-context-baseline.md) records
+verification and reference payload costs under the current reading contract.
 
 When reporting verification, name the exact command, result, and skipped
 surfaces. A package test does not establish portal behavior; a portal build does

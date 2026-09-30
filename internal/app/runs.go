@@ -33,7 +33,9 @@ type SelectedWatch struct {
 	IntervalSeconds  int64                   `json:"interval_seconds"`
 	LookbackSeconds  int64                   `json:"lookback_seconds"`
 	NextDueAt        time.Time               `json:"next_due_at"`
-	RelatedItems     []CapturedAttentionItem `json:"related_items"`
+	RelatedItems     []CapturedAttentionItem `json:"related_items,omitempty"`
+	PreviousAttempt  *WatchAttempt           `json:"previous_attempt,omitempty"`
+	LastSuccess      *WatchAttempt           `json:"last_success,omitempty"`
 }
 
 type InterestMatch struct {
@@ -78,12 +80,11 @@ type Run struct {
 	Summary         string          `json:"summary"`
 }
 
-// RunSummary is the human-facing history shape. The active packet keeps its
-// selected Watches under brief; history still exposes them for portal counts
-// and run browsing without changing the authoritative run response.
+// RunSummary omits captured source and Item text from history lists.
 type RunSummary struct {
 	Run
-	SelectedWatches []SelectedWatchOutput `json:"selected_watches"`
+	SelectedCount  int `json:"selected_count"`
+	SubmittedCount int `json:"submitted_count"`
 }
 
 type StartRun struct {
@@ -155,21 +156,22 @@ func (a *App) RunDetail(ctx context.Context, id string) (map[string]any, error) 
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"run": run, "selected_watches": compactSelectedWatches(run.SelectedWatches), "results": results}, nil
+	return map[string]any{"run": run, "selected_watches": compactSelectedWatches(run.SelectedWatches), "results": results,
+		"context": map[string]any{"consistency": "captured", "interests": map[string]any{"cursor": encodeContextCursor(contextCursor{RunID: run.ID, Collection: "interests"})}, "attention": map[string]any{"cursor": encodeContextCursor(contextCursor{RunID: run.ID, Collection: "attention_items"})}}}, nil
 }
 func (a *App) Runs(ctx context.Context) ([]RunSummary, error) {
-	rows, err := a.Store.DB.QueryContext(ctx, "SELECT "+runColumns+" FROM runs ORDER BY started_at DESC,id DESC")
+	rows, err := a.Store.DB.QueryContext(ctx, "SELECT id,runner_label,status,started_at,ended_at,after_seq,through_seq,summary,json_array_length(selected_watches),(SELECT count(*) FROM watch_results wr WHERE wr.run_id=runs.id) FROM runs ORDER BY started_at DESC,id DESC")
 	if err != nil {
 		return nil, err
 	}
 	defer rows.Close()
 	items := []RunSummary{}
 	for rows.Next() {
-		item, err := scanRun(rows)
+		item, err := scanRunSummary(rows)
 		if err != nil {
 			return nil, err
 		}
-		items = append(items, RunSummary{Run: item, SelectedWatches: compactSelectedWatches(item.SelectedWatches)})
+		items = append(items, item)
 	}
 	return items, rows.Err()
 }
@@ -178,7 +180,7 @@ func (a *App) RunsPage(ctx context.Context, afterID string, limit int) ([]RunSum
 	if limit < 1 || limit > 100 {
 		return nil, false, Invalid("limit must be between 1 and 100")
 	}
-	query := "SELECT " + runColumns + " FROM runs"
+	query := "SELECT id,runner_label,status,started_at,ended_at,after_seq,through_seq,summary,json_array_length(selected_watches),(SELECT count(*) FROM watch_results wr WHERE wr.run_id=runs.id) FROM runs"
 	args := []any{}
 	if afterID != "" {
 		var started int64
@@ -201,11 +203,11 @@ func (a *App) RunsPage(ctx context.Context, afterID string, limit int) ([]RunSum
 	defer rows.Close()
 	items := make([]RunSummary, 0, limit+1)
 	for rows.Next() {
-		run, scanErr := scanRun(rows)
+		run, scanErr := scanRunSummary(rows)
 		if scanErr != nil {
 			return nil, false, scanErr
 		}
-		items = append(items, RunSummary{Run: run, SelectedWatches: compactSelectedWatches(run.SelectedWatches)})
+		items = append(items, run)
 	}
 	if err = rows.Err(); err != nil {
 		return nil, false, err
@@ -318,21 +320,13 @@ ORDER BY i.id`, selected[index].MatchingPolicy, selected[index].ID)
 		if err = interestRows.Close(); err != nil {
 			return nil, 0, err
 		}
-		selected[index].RelatedItems = []CapturedAttentionItem{}
-		itemRows, itemErr := tx.QueryContext(ctx, `SELECT `+itemColumns+` FROM items WHERE watch_id=? ORDER BY content_updated_at DESC,id LIMIT 20`, selected[index].ID)
-		if itemErr != nil {
-			return nil, 0, itemErr
+		selected[index].PreviousAttempt, err = watchAttempt(ctx, tx, selected[index].ID, selected[index].SourceGeneration, false)
+		if err != nil {
+			return nil, 0, err
 		}
-		for itemRows.Next() {
-			item, scanErr := scanItem(itemRows)
-			if scanErr != nil {
-				itemRows.Close()
-				return nil, 0, scanErr
-			}
-			selected[index].RelatedItems = append(selected[index].RelatedItems, attentionItem(item))
-		}
-		if itemErr = itemRows.Close(); itemErr != nil {
-			return nil, 0, itemErr
+		selected[index].LastSuccess, err = watchAttempt(ctx, tx, selected[index].ID, selected[index].SourceGeneration, true)
+		if err != nil {
+			return nil, 0, err
 		}
 	}
 	more := eligible - len(selected)
@@ -362,7 +356,7 @@ func decodeContextCursor(value string) (contextCursor, error) {
 		return contextCursor{}, Invalid("Invalid continuation cursor")
 	}
 	var cursor contextCursor
-	if err = json.Unmarshal(data, &cursor); err != nil || cursor.Offset < 0 || (cursor.Collection != "interests" && cursor.Collection != "attention_items") {
+	if err = json.Unmarshal(data, &cursor); err != nil || cursor.Offset < 0 || (cursor.Collection != "interests" && cursor.Collection != "attention_items" && cursor.Collection != "focus" && cursor.Collection != "due_watches" && cursor.Collection != "unresolved_failures") {
 		return contextCursor{}, Invalid("Invalid continuation cursor")
 	}
 	return cursor, nil
@@ -502,43 +496,6 @@ func contextPageProjected[T, U any](runID, collection string, items []T, offset,
 	return result, nil
 }
 
-func firstContextPages(snapshot runContextSnapshot, runID string) (map[string]any, error) {
-	interests, err := contextPage(runID, "interests", snapshot.Interests, 0, contextPageSize)
-	if err != nil {
-		return nil, err
-	}
-	attention, err := contextPageProjected(runID, "attention_items", snapshot.Attention, 0, contextPageSize, compactAttentionItem)
-	if err != nil {
-		return nil, err
-	}
-	brief := map[string]any{
-		"interests":       interests["items"],
-		"attention_items": attention["items"],
-		"contexts":        snapshot.Contexts,
-		"continuations":   map[string]any{},
-	}
-	continuations := brief["continuations"].(map[string]any)
-	if cursor, ok := interests["next_cursor"]; ok {
-		continuations["interests"] = cursor
-	}
-	if cursor, ok := attention["next_cursor"]; ok {
-		continuations["attention_items"] = cursor
-	}
-	return brief, nil
-}
-
-// The receipt keeps the full captured text. Its cursor still follows the
-// bounded output page, so a retry has the same continuation boundary.
-func firstStoredContextPages(snapshot runContextSnapshot, runID string) (map[string]any, error) {
-	brief, err := firstContextPages(snapshot, runID)
-	if err != nil {
-		return nil, err
-	}
-	count := len(brief["attention_items"].([]AttentionItem))
-	brief["attention_items"] = snapshot.Attention[:count]
-	return brief, nil
-}
-
 func compactSelectedWatches(watches []SelectedWatch) []SelectedWatchOutput {
 	output := make([]SelectedWatchOutput, len(watches))
 	for index, watch := range watches {
@@ -552,45 +509,6 @@ func compactSelectedWatches(watches []SelectedWatch) []SelectedWatchOutput {
 		}
 	}
 	return output
-}
-
-func compactStartRunResponse(raw json.RawMessage) (json.RawMessage, error) {
-	var response map[string]json.RawMessage
-	if err := json.Unmarshal(raw, &response); err != nil {
-		return nil, err
-	}
-	var brief map[string]json.RawMessage
-	if err := json.Unmarshal(response["brief"], &brief); err != nil {
-		return nil, err
-	}
-	var attention []CapturedAttentionItem
-	if err := json.Unmarshal(brief["attention_items"], &attention); err != nil {
-		return nil, err
-	}
-	projected := make([]AttentionItem, len(attention))
-	for index, item := range attention {
-		projected[index] = compactAttentionItem(item)
-	}
-	encoded, err := json.Marshal(projected)
-	if err != nil {
-		return nil, err
-	}
-	brief["attention_items"] = encoded
-	var watches []SelectedWatch
-	if err := json.Unmarshal(brief["watches"], &watches); err != nil {
-		return nil, err
-	}
-	encoded, err = json.Marshal(compactSelectedWatches(watches))
-	if err != nil {
-		return nil, err
-	}
-	brief["watches"] = encoded
-	encoded, err = json.Marshal(brief)
-	if err != nil {
-		return nil, err
-	}
-	response["brief"] = encoded
-	return json.Marshal(response)
 }
 
 func loadRunContext(ctx context.Context, db querier, runID string) (runContextSnapshot, error) {
@@ -664,28 +582,20 @@ func (a *App) StartRun(ctx context.Context, input StartRun) (json.RawMessage, er
 		if err != nil {
 			return nil, err
 		}
-		brief, err := firstStoredContextPages(snapshot, id)
-		if err != nil {
-			return nil, err
-		}
-		brief["watches"] = selected
-		brief["after_seq"] = after
-		brief["through_seq"] = through
-		brief["more_due_count"] = more
 		changes, nextChanges, err := eventsPage(ctx, tx, after, through, "", contextPageSize)
 		if err != nil {
 			return nil, err
 		}
-		brief["changes"] = changes
-		if nextChanges != "" {
-			brief["changes_next_cursor"] = nextChanges
+		context, err := inspectionContext(snapshot, run, more, changes, nextChanges)
+		if err != nil {
+			return nil, err
 		}
-		return map[string]any{"run": run, "brief": brief}, nil
+		return map[string]any{"run": run, "context": context}, nil
 	})
 	if err != nil {
 		return nil, err
 	}
-	return compactStartRunResponse(raw)
+	return raw, nil
 }
 
 func liveRun(run Run) error {
@@ -920,105 +830,6 @@ func eventsBetween(ctx context.Context, db rowsQuerier, after, through int64) ([
 	return items, rows.Err()
 }
 
-func (a *App) Brief(ctx context.Context) (map[string]any, error) {
-	return a.BriefPage(ctx, "")
-}
-
-func (a *App) BriefPage(ctx context.Context, cursor string) (map[string]any, error) {
-	if cursor != "" {
-		decoded, err := decodeContextCursor(cursor)
-		if err != nil {
-			return nil, err
-		}
-		var snapshot runContextSnapshot
-		if decoded.RunID != "" {
-			snapshot, err = loadRunContext(ctx, a.Store.DB, decoded.RunID)
-		} else {
-			var tx *sql.Tx
-			tx, err = a.Store.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-			if err == nil {
-				settings, settingsErr := readSettings(ctx, tx)
-				if settingsErr == nil {
-					snapshot, err = contextSnapshot(ctx, tx, settings, a.Now().UTC().UnixMilli())
-				} else {
-					err = settingsErr
-				}
-				_ = tx.Rollback()
-			}
-		}
-		if err != nil {
-			return nil, err
-		}
-		var page map[string]any
-		switch decoded.Collection {
-		case "interests":
-			page, err = contextPage(decoded.RunID, decoded.Collection, snapshot.Interests, decoded.Offset, contextContinuationPageSize)
-		case "attention_items":
-			page, err = contextPageProjected(decoded.RunID, decoded.Collection, snapshot.Attention, decoded.Offset, contextContinuationPageSize, compactAttentionItem)
-		}
-		if err != nil {
-			return nil, err
-		}
-		if decoded.RunID != "" {
-			page["run_id"] = decoded.RunID
-		}
-		return page, nil
-	}
-
-	tx, err := a.Store.DB.BeginTx(ctx, &sql.TxOptions{ReadOnly: true})
-	if err != nil {
-		return nil, err
-	}
-	defer tx.Rollback()
-	now := a.Now().UTC()
-	selected, more, err := selectWatches(ctx, tx, StartRun{}, now.UnixMilli())
-	if err != nil {
-		return nil, err
-	}
-	var afterText string
-	if err = tx.QueryRowContext(ctx, `SELECT value FROM settings WHERE key='acknowledged_event_seq'`).Scan(&afterText); err != nil {
-		return nil, err
-	}
-	after, _ := strconv.ParseInt(afterText, 10, 64)
-	var through int64
-	if err = tx.QueryRowContext(ctx, `SELECT COALESCE(MAX(seq),0) FROM events`).Scan(&through); err != nil {
-		return nil, err
-	}
-	settings, err := readSettings(ctx, tx)
-	if err != nil {
-		return nil, err
-	}
-	snapshot, err := contextSnapshot(ctx, tx, settings, now.UnixMilli())
-	if err != nil {
-		return nil, err
-	}
-	changes, nextChanges, err := eventsPage(ctx, tx, after, through, "", contextPageSize)
-	if err != nil {
-		return nil, err
-	}
-	if err = tx.Commit(); err != nil {
-		return nil, err
-	}
-	brief, err := firstContextPages(snapshot, "")
-	if err != nil {
-		return nil, err
-	}
-	brief["watches"] = compactSelectedWatches(selected)
-	brief["more_due_count"] = more
-	brief["changes"] = map[string]int64{"after_seq": after, "through_seq": through}
-	brief["changes_items"] = changes
-	if nextChanges != "" {
-		brief["changes_next_cursor"] = nextChanges
-	}
-	health, err := a.OperationalHealth(ctx)
-	if err != nil {
-		return nil, err
-	}
-	brief["now"] = now
-	brief["health"] = health
-	return brief, nil
-}
-
 type WatchHealth struct {
 	WatchID       string     `json:"watch_id"`
 	NextDueAt     time.Time  `json:"next_due_at"`
@@ -1083,11 +894,13 @@ func (a *App) OperationalHealth(ctx context.Context) (map[string]any, error) {
 	rows, err := a.Store.DB.QueryContext(ctx, `SELECT w.id,w.next_due_at,w.state,w.valid_until,
   (SELECT count(*) FROM interests i WHERE i.state='active' AND
    (w.matching_policy='broad' OR EXISTS (SELECT 1 FROM watch_interests wi WHERE wi.watch_id=w.id AND wi.interest_id=i.id))),
-  (SELECT status FROM watch_results wr WHERE wr.watch_id=w.id ORDER BY recorded_at DESC,run_id DESC LIMIT 1),
-  (SELECT recorded_at FROM watch_results wr WHERE wr.watch_id=w.id ORDER BY recorded_at DESC,run_id DESC LIMIT 1),
-  (SELECT MAX(recorded_at) FROM watch_results wr WHERE wr.watch_id=w.id AND status='success'),
-  (SELECT json_extract(result,'$.error') FROM watch_results wr WHERE wr.watch_id=w.id ORDER BY recorded_at DESC,run_id DESC LIMIT 1)
-	 FROM watches w ORDER BY w.id`)
+	  wr.status, wr.recorded_at,
+	  (SELECT MAX(history.recorded_at) FROM watch_results history JOIN runs r ON r.id=history.run_id
+	   WHERE history.watch_id=w.id AND history.status='success' AND EXISTS (
+	    SELECT 1 FROM json_each(r.selected_watches) sw WHERE json_extract(sw.value,'$.id')=w.id
+	    AND json_extract(sw.value,'$.source_generation')=w.source_generation)),
+	  json_extract(wr.result,'$.error')
+	 FROM watches w LEFT JOIN watch_results wr ON wr.rowid=`+latestCurrentResult+` ORDER BY w.id`)
 	if err != nil {
 		return nil, err
 	}

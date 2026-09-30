@@ -8,6 +8,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/zhuochun/control-plane/internal/app"
+	"github.com/zhuochun/control-plane/internal/httpapi"
+	"github.com/zhuochun/control-plane/internal/store"
+
 	"github.com/modelcontextprotocol/go-sdk/mcp"
 )
 
@@ -24,9 +28,8 @@ func TestGetBriefOverMCP(t *testing.T) {
 			return
 		}
 		_ = json.NewEncoder(w).Encode(map[string]any{
-			"watches":        []any{},
-			"more_due_count": 0,
-			"changes":        map[string]any{"after_seq": 2, "through_seq": 4},
+			"consistency": "live",
+			"due_watches": map[string]any{"count": 0, "items": []any{}},
 		})
 	}))
 	defer api.Close()
@@ -51,7 +54,7 @@ func TestGetBriefOverMCP(t *testing.T) {
 	for _, tool := range tools.Tools {
 		names[tool.Name] = true
 	}
-	for _, name := range []string{"get_brief", "start_run", "submit_watch_findings", "upsert_item", "finish_run", "list_watchers", "get_watcher", "create_watcher", "update_watcher", "list_interests", "create_interest", "update_interest"} {
+	for _, name := range []string{"get_brief", "start_run", "submit_watch_findings", "upsert_item", "finish_run", "list_watchers", "get_watcher", "create_watcher", "update_watcher", "list_interests", "create_interest", "update_interest", "list_items", "get_status", "get_settings"} {
 		if !names[name] {
 			t.Fatalf("missing final MCP tool %q", name)
 		}
@@ -75,7 +78,7 @@ func TestGetBriefOverMCP(t *testing.T) {
 		t.Fatalf("tool returned an error: %+v", result.Content)
 	}
 	brief, ok := result.StructuredContent.(map[string]any)
-	if !ok || brief["more_due_count"] != float64(0) {
+	if !ok || brief["consistency"] != "live" {
 		t.Fatalf("unexpected structured brief: %#v", result.StructuredContent)
 	}
 	errorResult, err := clientSession.CallTool(context.Background(), &mcp.CallToolParams{Name: "get_item", Arguments: map[string]any{"item_id": "missing"}})
@@ -89,4 +92,76 @@ func TestGetBriefOverMCP(t *testing.T) {
 	if !ok || text.Text == "" || !json.Valid([]byte(text.Text)) {
 		t.Fatalf("error details were not preserved as JSON: %#v", errorResult.Content)
 	}
+}
+
+func TestItemLookupAndCapturedAttentionThroughMCP(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	a := app.New(s)
+	for _, key := range []string{"matter:A & B", "matter:other"} {
+		if _, err = a.PutItem(ctx, "", app.PutItem{DedupeKey: key, Kind: "task", Title: "Existing matter", Summary: key, Sources: []app.Source{}, InitialTodoState: "todo", Report: app.Report{SchemaVersion: 1, BodyMD: "Keep user state"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	api := httptest.NewServer(httpapi.New(a, http.NotFoundHandler(), "test"))
+	defer api.Close()
+	serverTransport, clientTransport := mcp.NewInMemoryTransports()
+	serverSession, err := New(api.URL, "test").Connect(ctx, serverTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer serverSession.Close()
+	clientSession, err := mcp.NewClient(&mcp.Implementation{Name: "test", Version: "1"}, nil).Connect(ctx, clientTransport, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer clientSession.Close()
+	call := func(name string, args map[string]any) map[string]any {
+		t.Helper()
+		result, err := clientSession.CallTool(ctx, &mcp.CallToolParams{Name: name, Arguments: args})
+		if err != nil || result.IsError {
+			t.Fatalf("%s: %+v %v", name, result, err)
+		}
+		return result.StructuredContent.(map[string]any)
+	}
+	exact := call("list_items", map[string]any{"dedupe_key": "matter:A & B", "limit": 1})
+	items := exact["items"].([]any)
+	if len(items) != 1 || items[0].(map[string]any)["dedupe_key"] != "matter:A & B" {
+		t.Fatalf("exact lookup failed: %#v", exact)
+	}
+	page := call("list_items", map[string]any{"view": "todo", "query": "Existing matter", "limit": 1})
+	next := call("list_items", map[string]any{"view": "todo", "query": "Existing matter", "limit": 1, "cursor": page["next_cursor"]})
+	if page["items"].([]any)[0].(map[string]any)["id"] == next["items"].([]any)[0].(map[string]any)["id"] {
+		t.Fatal("lookup pagination repeated first item")
+	}
+	started := call("start_run", map[string]any{"request_id": "mcp-context", "watch_ids": []string{}})
+	packet := started["context"].(map[string]any)
+	if _, old := started["brief"]; old {
+		t.Fatal("MCP still returned old contract")
+	}
+	if _, mandatory := packet["attention_items"]; mandatory {
+		t.Fatal("MCP enumerated optional backlog")
+	}
+	available := packet["available"].(map[string]any)["attention"].(map[string]any)
+	captured := call("get_brief", map[string]any{"cursor": available["cursor"]})
+	if captured["consistency"] != "captured" || len(captured["items"].([]any)) != 2 {
+		t.Fatalf("missing optional capture: %#v", captured)
+	}
+	brief := call("get_brief", map[string]any{})
+	if brief["consistency"] != "live" || brief["active_run"] == nil {
+		t.Fatalf("brief unavailable during active Run: %#v", brief)
+	}
+	settings := call("get_settings", map[string]any{})
+	if settings["agents_md"] == nil {
+		t.Fatal("context unavailable on demand")
+	}
+	status := call("get_status", map[string]any{})
+	if status["health"] == nil {
+		t.Fatal("full limitations unavailable on demand")
+	}
+	call("finish_run", map[string]any{"run_id": started["run"].(map[string]any)["id"], "summary": "Only requested source scope"})
 }

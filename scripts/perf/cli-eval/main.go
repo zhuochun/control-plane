@@ -172,7 +172,7 @@ func main() {
 	}
 	call("brief_preview", "brief")
 	started := call("run_start", "run", "start", "--runner-label", "cli-eval")
-	brief := asMap(started["brief"])
+	brief := asMap(started["context"])
 	var runID string
 	must(s.DB.QueryRowContext(ctx, "SELECT id FROM runs WHERE runner_label='cli-eval' ORDER BY started_at DESC,id DESC LIMIT 1").Scan(&runID))
 	run, err := a.Run(ctx, runID)
@@ -183,9 +183,9 @@ func main() {
 	if run.AfterSeq != afterSeq || run.ThroughSeq != throughSeq {
 		log.Fatalf("Run captured unexpected change range: (%d,%d]", run.AfterSeq, run.ThroughSeq)
 	}
-	packetCounts := map[string]int{"interests": len(asList(brief["interests"])), "attention_items": len(asList(brief["attention_items"]))}
+	packetCounts := map[string]int{"interests": len(asList(brief["interests"])), "attention_items": 0}
 	continuations := asMap(brief["continuations"])
-	for _, collection := range []string{"interests", "attention_items"} {
+	for _, collection := range []string{"interests"} {
 		cursor, _ = continuations[collection].(string)
 		for cursor != "" {
 			page := call(collection+"_continuation", "brief", "--cursor", cursor)
@@ -200,13 +200,23 @@ func main() {
 	must(s.DB.QueryRowContext(ctx, "SELECT context_snapshot FROM runs WHERE id=?", runID).Scan(&snapshotRaw))
 	var snapshot map[string]any
 	must(json.Unmarshal([]byte(snapshotRaw), &snapshot))
-	for _, collection := range []string{"interests", "attention_items"} {
-		if packetCounts[collection] != len(asList(snapshot[collection])) {
-			log.Fatalf("CLI %s pages incomplete: %d of %d", collection, packetCounts[collection], len(asList(snapshot[collection])))
+	required := map[string]bool{}
+	for _, watch := range run.SelectedWatches {
+		for _, match := range watch.Interests {
+			required[match.ID] = true
 		}
 	}
+	if packetCounts["interests"] != len(required) {
+		log.Fatalf("CLI required Interests incomplete: %d of %d", packetCounts["interests"], len(required))
+	}
+	if _, mandatory := brief["attention_items"]; mandatory {
+		log.Fatal("CLI default Run enumerated Attention")
+	}
+	if asMap(brief["overview"])["attention_count"] != float64(len(asList(snapshot["attention_items"]))) {
+		log.Fatal("CLI optional Attention count mismatch")
+	}
 	changeCount := len(asList(brief["changes"]))
-	cursor, _ = brief["changes_next_cursor"].(string)
+	cursor, _ = continuations["changes"].(string)
 	for cursor != "" {
 		page := call("changes_continuation", "changes", "--after-seq", fmt.Sprint(run.AfterSeq), "--through-seq", fmt.Sprint(run.ThroughSeq), "--limit", "100", "--cursor", cursor)
 		changeCount += len(asList(page["items"]))
