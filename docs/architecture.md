@@ -72,7 +72,8 @@ tests; they do not replace public-interface verification for a behavior change.
 
 | Affected path | Focused feedback | Broader evidence |
 | --- | --- | --- |
-| Application or migration | `go test ./internal/app` or `go test ./internal/store` | `go test ./...` and the affected public adapter test |
+| Go source | `golangci-lint fmt`, then `scripts/check-go.ps1` | `go vet ./...`, `go test ./...`, and `go build ./cmd/aicp` |
+| Application or migration | `go test ./internal/app` or `go test ./internal/store` | `scripts/check-go.ps1`, `go vet ./...`, `go test ./...`, and the affected public adapter test |
 | HTTP, CLI, or MCP | `go test ./internal/httpapi`, `go test ./cmd/aicp`, or `go test ./internal/mcpserver` | `go test ./...`; use the demo for a run-flow change |
 | Portal | `npm --prefix web run build` | Build the executable, then `npm --prefix web run test:e2e` |
 | Cross-adapter run or Item state | Relevant Go package tests | `scripts/demo.ps1` and `scripts/verify.ps1` |
@@ -84,11 +85,19 @@ test server and data directory; it does not reuse a server already bound to
 exercises two run cycles through the public CLI. Stop another local aicp server
 before either check if it owns that port.
 
-`scripts/verify.ps1` is the complete Windows local gate: locked web install,
-typecheck, portal build, Go vet and tests, executable build, browser tests, and
-the fixture demo. `.github/workflows/release.yml` verifies Windows and Linux
-for release tags or a manual release run; it is not a pull-request gate. Linux
-CI additionally runs Go tests with `-race`. The demo and browser tests use
+`scripts/check-go.ps1` is the focused Go quality gate. It checks the pinned
+golangci-lint version, gofmt/goimports output, and the configured standard
+Staticcheck, Go vet, and targeted readability rules. `errcheck` is deferred until
+the existing unchecked results are resolved. Install the version in
+`.golangci-lint-version` using the
+[official local installation instructions](https://golangci-lint.run/docs/welcome/install/local/)
+before running it. `scripts/verify.ps1` is the complete
+Windows local gate: locked web install, typecheck, portal build, Go formatting
+and lint, vet and tests, executable build, browser tests, and the fixture demo.
+`.github/workflows/go-quality.yml` enforces the Go quality checks on pushes to
+`main` and pull requests. `.github/workflows/release.yml` verifies Windows and
+Linux for release tags or a manual release run. Linux CI additionally runs Go
+tests with `-race`. The demo and browser tests use
 local fixtures and an isolated database, so they do not establish live access
 to external sources.
 

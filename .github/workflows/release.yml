@@ -24,6 +24,11 @@ jobs:
           cache: true
       - run: npm --prefix web ci
       - run: npm --prefix web run build
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version-file: .golangci-lint-version
+          install-only: true
+      - run: pwsh -File scripts/check-go.ps1
       - run: go vet ./...
       - run: go test -race ./...
       - run: go build -trimpath -o dist/aicp ./cmd/aicp
@@ -43,6 +48,10 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
+      - uses: golangci/golangci-lint-action@v9
+        with:
+          version-file: .golangci-lint-version
+          install-only: true
       - run: npx --prefix web playwright install chromium
       - shell: pwsh
         run: .\scripts\verify.ps1
