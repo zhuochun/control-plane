@@ -1,6 +1,6 @@
 import React from "react";
 import { createRoot } from "react-dom/client";
-import { BrowserRouter, NavLink, Route, Routes } from "react-router";
+import { BrowserRouter, NavLink, Route, Routes, useLocation, useNavigate } from "react-router";
 import {
   QueryClient,
   QueryClientProvider,
@@ -8,13 +8,16 @@ import {
   useQuery,
   useQueryClient,
 } from "@tanstack/react-query";
-import { Alert, Button, CssBaseline, Dialog, DialogActions, DialogContent, DialogTitle, TextField, ThemeProvider, createTheme } from "@mui/material";
+import { Alert, Button, CssBaseline, Dialog, DialogActions, DialogContent, DialogTitle, Menu, MenuItem, TextField, ThemeProvider, createTheme } from "@mui/material";
+import SearchOutlined from "@mui/icons-material/SearchOutlined";
+import KeyboardArrowDownOutlined from "@mui/icons-material/KeyboardArrowDownOutlined";
 import { useState } from "react";
 import "./style.css";
+import "./workspace.css";
 import { api, collection } from "./api";
 import { Interests } from "./interests";
 import { ItemDetail } from "./items";
-import { ItemWorkspace } from "./workspace";
+import { ItemWorkspace, InboxCaptureDialog } from "./workspace";
 import { Preferences } from "./preferences";
 import { formatDateTime, useSettings } from "./settings";
 import type { ServiceStatus } from "./health";
@@ -193,16 +196,18 @@ function Activity() {
 }
 
 function Portal() {
+  const location = useLocation();
+  const navigate = useNavigate();
+  const [workspaceMenu, setWorkspaceMenu] = useState<HTMLElement | null>(null);
+  const [newItem, setNewItem] = useState(false);
   const status = useQuery({
     queryKey: ["status"],
     queryFn: () => api<ServiceStatus>("/status"),
   });
   const navigation = [
-    ["/", "Attention", "◉"],
-    ["/todos", "Todos", "✓"],
-    ["/interests", "Monitoring", "✳"],
-    ["/library", "All items", "▤"],
-    ["/activity", "Activity", "↗"],
+    ["/", "Attention"],
+    ["/todos", "Todos"],
+    ["/library", "All items"],
   ];
   return (
     <div className="workspace">
@@ -213,11 +218,9 @@ function Portal() {
             <span>aicp</span>
             <span className="brand-dot">.</span>
           </NavLink>
-          <div className="topbar-caption">Your attention, considered.</div>
           <nav className="main-navigation" aria-label="Main navigation">
-            {navigation.map(([path, label, icon]) => (
+            {navigation.map(([path, label]) => (
               <NavLink end={path === "/"} key={path} to={path}>
-                <span aria-hidden="true">{icon}</span>
                 {label}
                 {path === "/" && <span className="navigation-count">{status.data?.health.item_counts.attention ?? ""}</span>}
                 {path === "/todos" && <span className="navigation-count">{status.data?.health.item_counts.todo ?? ""}</span>}
@@ -225,22 +228,24 @@ function Portal() {
               </NavLink>
             ))}
           </nav>
+          <form className="portal-search" role="search" onSubmit={(event) => {
+            event.preventDefault();
+            const q = String(new FormData(event.currentTarget).get("q") ?? "").trim();
+            const path = ["/", "/todos", "/library"].includes(location.pathname) ? location.pathname : "/library";
+            navigate(path + (q ? "?" + new URLSearchParams({ q }).toString() : ""));
+          }}>
+            <SearchOutlined fontSize="small" />
+            <input key={location.pathname + location.search} type="search" name="q" aria-label="Search items" placeholder="Search items, findings, or notes…" defaultValue={new URLSearchParams(location.search).get("q") ?? ""} />
+          </form>
           <div className="topbar-actions">
-            <div className="topbar-status">
-              <span
-                className={status.isError ? "status-dot offline" : "status-dot"}
-              />
-              <span className="status-label">
-                {status.isError
-                  ? "Server unavailable"
-                  : status.data
-                    ? "Local workspace"
-                    : "Connecting…"}
-              </span>
-            </div>
-            <NavLink className="preferences-link" to="/preferences">
-              Preferences
-            </NavLink>
+            <Button variant="outlined" onClick={() => setNewItem(true)}>Add to inbox</Button>
+            <Button aria-haspopup="menu" aria-expanded={!!workspaceMenu} aria-controls={workspaceMenu ? "workspace-menu" : undefined} onClick={(event) => setWorkspaceMenu(event.currentTarget)} endIcon={<KeyboardArrowDownOutlined />}>Workspace</Button>
+            <Menu id="workspace-menu" anchorEl={workspaceMenu} open={!!workspaceMenu} onClose={() => setWorkspaceMenu(null)}>
+              <MenuItem component={NavLink} to="/interests" onClick={() => setWorkspaceMenu(null)}>Monitoring</MenuItem>
+              <MenuItem component={NavLink} to="/activity" onClick={() => setWorkspaceMenu(null)}>Activity</MenuItem>
+              <MenuItem component={NavLink} to="/preferences" onClick={() => setWorkspaceMenu(null)}>Preferences</MenuItem>
+              <MenuItem disabled>{status.isError ? "Server unavailable" : status.data ? "Local workspace" : "Connecting…"}</MenuItem>
+            </Menu>
           </div>
         </div>
       </header>
@@ -272,6 +277,7 @@ function Portal() {
           aicp <span>Small signals. Thoughtful follow-through.</span>
         </footer>
       </main>
+      {newItem && <InboxCaptureDialog close={() => setNewItem(false)} />}
     </div>
   );
 }

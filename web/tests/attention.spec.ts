@@ -60,16 +60,18 @@ test("user can capture a date-only Item without a link",async({page})=>{
   const libraryCount = page.locator('nav a[href="/library"] .navigation-count');
   await expect(libraryCount).not.toBeEmpty();
   const before = Number(await libraryCount.textContent());
-  await page.getByRole("button",{name:"New Item"}).click();
+  await page.getByRole("button",{name:"Add to inbox",exact:true}).click();
   const dialog=page.getByRole("dialog");
-  await dialog.getByRole("textbox",{name:"Title"}).fill(`User idea ${marker}`);
-  await dialog.getByRole("textbox",{name:"Summary"}).fill("Review this independently of source monitoring.");
+  await dialog.getByRole("textbox",{name:"Information"}).fill("Review this independently of source monitoring.");
+  await dialog.getByText("Optional context",{exact:true}).click();
+  await dialog.getByRole("textbox",{name:"Title (optional)"}).fill(`User idea ${marker}`);
   await dialog.getByLabel("Source date (optional)").fill("2026-09-27");
-  await dialog.getByRole("button",{name:"Create"}).click();
+  await dialog.getByRole("button",{name:"Add to inbox",exact:true}).click();
   await expect(dialog).toHaveCount(0);
-  await expect(libraryCount).toHaveText(String(before + 1));
+  // Other browser-test workers also create Items in this shared fixture database.
+  await expect.poll(async () => Number(await libraryCount.textContent())).toBeGreaterThanOrEqual(before + 1);
   await page.getByRole("button",{name:new RegExp(`User idea ${marker}`)}).click();
-  await page.getByRole("link",{name:/Full detail/}).click();
+  await expect(page.getByRole("link",{name:/Full detail/})).toHaveCount(0);
   await expect(page.getByText("2026-09-27",{exact:true})).toBeVisible();
   await expect(page.getByRole("link",{name:/Source date/})).toHaveCount(0);
 });
@@ -108,16 +110,16 @@ test("a report survives Todo, reminder, reload, and Done", async ({
   await page
     .getByRole("button", { name: /Confirm the rollout sequence/ })
     .click();
-  await page.getByRole("link", { name: /Full detail/ }).click();
+  await expect(page.getByRole("link", { name: /Full detail/ })).toHaveCount(0);
   await expect(page.getByRole("heading", { name: "Options" })).toBeVisible();
   await expect(page.getByRole("table")).toBeVisible();
   const source = page.getByRole("link", { name: /Rollout discussion/ });
   await expect(source).toHaveAttribute("href", "https://example.com/thread");
   await expect(source).toHaveAttribute("target", "_blank");
 
-  await page.getByRole("button", { name: "Set Todo" }).click();
+  await page.getByRole("button", { name: "Add Todo" }).click();
   await expect(page.getByRole("button", { name: "Mark Done" })).toBeVisible();
-  await page.getByRole("button", { name: "Remind me" }).click();
+  await page.getByRole("button", { name: "Remind", exact: true }).click();
   await page.getByLabel("Date").fill("2030-09-16");
   await page.getByRole("button", { name: "Set reminder" }).click();
   await expect(
@@ -126,6 +128,7 @@ test("a report survives Todo, reminder, reload, and Done", async ({
   await expect(page.getByText(/Reminder/)).toBeVisible();
 
   await page.reload();
+  await page.getByRole("button", { name: /Confirm the rollout sequence/ }).click();
   await expect(page.getByRole("button", { name: "Mark Done" })).toBeVisible();
   await expect(page.getByText(/Reminder/)).toBeVisible();
   await page.getByRole("button", { name: "Mark Done" }).click();
@@ -160,9 +163,11 @@ test("a person can accept an agent proposal and inspect its history", async ({
   await page.getByRole("button", { name: "Accept" }).click();
   await expect(page.getByText("Useful signal:")).toHaveCount(0);
 
-  await page.getByRole("link", { name: "Monitoring" }).click();
+  await page.getByRole("button", { name: "Workspace", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Monitoring", exact: true }).click();
   await expect(page.getByText("Gentle release watch")).toBeVisible();
-  await page.getByRole("link", { name: "Activity" }).click();
+  await page.getByRole("button", { name: "Workspace", exact: true }).click();
+  await page.getByRole("menuitem", { name: "Activity", exact: true }).click();
   await expect(page.getByText("Human decisions")).toBeVisible();
   await expect(
     page.getByText(/this keeps release changes together/),

@@ -81,6 +81,7 @@ const when = (value: string, timezone?: string) =>
 type MetricValue = {
   value: number;
   display: string;
+  label?: string;
 };
 type Metric = {
   label: string;
@@ -93,7 +94,7 @@ type Metric = {
 };
 
 const metricValuePattern =
-  "[+-]?(?:[$€£¥])?\\d[\\d,]*(?:\\.\\d+)?(?:\\s*[a-zA-Z%]+)?";
+  "[+-]?(?:[$€£¥])?\\d[\\d,]*(?:\\.\\d+)?(?:[ \\t]*[a-zA-Z%]+)?";
 
 function plainMarkdown(value: string): string {
   return value
@@ -132,12 +133,13 @@ function parseMetricSeries(body: string): MetricValue[] {
           (cell) => cell.length > 1 && cell.replace(/[-:]/g, "").trim() === "",
         ),
     )
-    .map((cells) =>
-      cells
+    .map((cells): MetricValue | null => {
+      const point = cells
         .slice(1)
         .map(parseMetricValue)
-        .find((value) => value !== null),
-    )
+        .find((value) => value !== null);
+      return point ? { ...point, label: cells[0] } : null;
+    })
     .filter(
       (value): value is MetricValue => value !== undefined && value !== null,
     );
@@ -169,16 +171,14 @@ export function parseMetric(item: Item): Metric | null {
 
   const targetMatch = combined.match(
     new RegExp(
-      "(?:target[ ]*(?:is|of|at|:)?[ ]*" +
-        valuePattern +
-        "|" +
-        valuePattern +
-        "[ ]+target)",
+      "\\btarget[ ]*(?:is|of|at|:)?[ ]*" + valuePattern,
       "i",
     ),
   );
-  const target = targetMatch
-    ? parseMetricValue(targetMatch[1] ?? targetMatch[2])
+  const trailingTarget = combined.match(new RegExp(valuePattern + "[ ]+target\\b", "i"));
+  const targetRaw = targetMatch?.[1] ?? trailingTarget?.[1];
+  const target = targetRaw && !/\b(?:above|below)\b/i.test(targetRaw)
+    ? parseMetricValue(targetRaw)
     : undefined;
   const labelMarker = "metric attention:";
   const labelLine = body
