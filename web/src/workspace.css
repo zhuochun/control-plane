@@ -1,0 +1,770 @@
+/* The queue and full report share one reading workspace. */
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+  border: 0;
+}
+.topbar {
+  height: 72px;
+  position: sticky;
+  inset: auto;
+  top: 0;
+  width: 100%;
+  border-right: 0;
+  border-bottom: 1px solid var(--line);
+  background: #fff;
+  backdrop-filter: none;
+}
+.topbar-inner {
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  margin: 0;
+  padding: 0 28px;
+  display: flex;
+  flex-direction: row;
+  flex-wrap: nowrap;
+  align-items: center;
+  gap: 28px;
+}
+.brand {
+  padding: 0;
+  font-size: 27px;
+}
+.brand-mark {
+  width: 38px;
+  height: 40px;
+}
+.main-navigation {
+  width: auto;
+  flex: 0 0 auto;
+  flex-direction: row;
+  margin: 0;
+  order: 0;
+  gap: 6px;
+}
+.main-navigation a {
+  min-height: 40px;
+  padding: 10px 14px;
+  font-size: 14px;
+}
+.main-navigation a.active {
+  background: #eef4ef;
+  color: var(--green);
+}
+.main-navigation a .navigation-count {
+  width: auto;
+  min-width: 0;
+  margin: 0;
+  padding: 0;
+  font-size: 12px;
+  color: var(--muted);
+  background: none;
+}
+.portal-search {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex: 1;
+  max-width: 500px;
+  min-width: 160px;
+  height: 42px;
+  padding: 0 12px;
+  border: 1px solid var(--line);
+  border-radius: 7px;
+  color: var(--muted);
+}
+.portal-search:focus-within {
+  outline: 2px solid var(--green);
+  outline-offset: 2px;
+}
+.portal-search input {
+  width: 100%;
+  min-width: 0;
+  border: 0;
+  outline: none;
+  background: transparent;
+  font: inherit;
+  font-size: 14px;
+  color: var(--ink);
+}
+.portal-search input:focus-visible {
+  outline: none;
+}
+.topbar-actions {
+  display: flex;
+  flex-direction: row;
+  margin: 0 0 0 auto;
+  padding: 0;
+  border: 0;
+  gap: 8px;
+}
+.topbar-actions .MuiButton-root {
+  color: var(--ink);
+  font-size: 14px;
+}
+main {
+  display: flow-root;
+  width: 100%;
+  max-width: none;
+  min-height: calc(100dvh - 72px);
+  margin: 0;
+  padding: 0;
+}
+main > :not(.item-workspace):not(footer) {
+  margin: 32px;
+}
+main > footer {
+  margin: 24px 32px;
+}
+main:has(> .item-workspace) > footer {
+  display: none;
+}
+.item-workspace {
+  display: grid;
+  grid-template-columns: clamp(350px, 28vw, 410px) minmax(0, 1fr);
+  height: calc(100dvh - 72px);
+  min-height: 0;
+  background: #fff;
+  overflow: hidden;
+}
+.workspace-list {
+  min-width: 0;
+  min-height: 0;
+  padding: 0 0 24px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  border-right: 1px solid var(--line);
+}
+.workspace-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  padding: 26px 24px 18px;
+  min-height: 0;
+}
+.workspace-title {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+.workspace-title h1 {
+  margin: 0;
+  font-size: 28px;
+  font-weight: 650;
+  letter-spacing: -0.9px;
+}
+.workspace-count {
+  padding: 3px 8px;
+  border-radius: 8px;
+  background: var(--green-soft);
+  color: var(--green);
+  font-size: 13px;
+}
+.workspace-toolbar .MuiButton-root {
+  min-width: 0;
+  padding: 4px;
+  font-size: 13px;
+}
+.queue-tools {
+  padding: 24px 24px 18px;
+}
+.capture-context summary {
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 14px;
+  padding: 8px 0;
+}
+.capture-context > .editor-fields {
+  margin-top: 12px;
+}
+.queue-filters {
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  background: #f7f9f7;
+}
+.queue-filters summary {
+  width: fit-content;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 20px;
+  cursor: pointer;
+}
+.workspace-filters {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin: 12px 0 0;
+}
+.workspace-filters select {
+  box-sizing: border-box;
+  min-width: 0;
+  width: 100%;
+  height: 38px;
+  padding: 0 8px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+  color: var(--ink);
+  background: #fff;
+  font: inherit;
+  font-size: 13px;
+}
+.queue-search-label {
+  margin: 0 24px 14px;
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.queue-row {
+  display: block;
+  width: 100%;
+  min-height: 110px;
+  padding: 18px 24px;
+  border: 0;
+  border-bottom: 1px solid var(--line-soft);
+  background: transparent;
+  color: var(--ink);
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+.queue-row:hover {
+  background: #f5f8f5;
+}
+.queue-row.selected {
+  background: #e7f2ec;
+}
+.queue-row:focus-visible {
+  outline: 2px solid var(--green);
+  outline-offset: -2px;
+}
+.queue-item-top {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+}
+.queue-item-top strong {
+  font-size: 15px;
+  font-weight: 600;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+.queue-item-summary {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  margin: 4px 0 8px;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+}
+.queue-item-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.queue-item-meta > :nth-child(2) {
+  margin-left: auto;
+}
+.queue-state {
+  padding: 2px 6px;
+  border-radius: 4px;
+  background: var(--green-soft);
+  color: var(--green);
+}
+.queue-state.todo {
+  background: var(--warm-soft);
+  color: #885520;
+}
+.queue-state.due {
+  background: #fbe8e2;
+  color: #963a2a;
+}
+.workspace-list > .MuiAlert-root {
+  margin: 16px;
+  font-size: 14px;
+}
+.workspace-list > [role="status"],
+.ledger-empty-state {
+  margin: 16px 24px;
+  padding: 0;
+  color: var(--muted);
+  font-size: 14px;
+}
+.ledger-proposals {
+  margin: 24px 16px;
+}
+.ledger-proposals h2 {
+  margin-bottom: 12px;
+  font-size: 17px;
+}
+.workspace-reader {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: #fff;
+}
+.reader-scroll {
+  flex: 0 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 30px 32px 28px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.reader-scroll:focus-visible {
+  outline-offset: -3px;
+}
+.reader-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 16px;
+}
+.reader-header h2 {
+  flex: 1 1 350px;
+  margin: 0;
+  font-size: 36px;
+  font-weight: 650;
+  line-height: 1.25;
+  letter-spacing: -0.9px;
+  overflow-wrap: anywhere;
+}
+.reader-actions {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.reader-actions .MuiButton-root {
+  font-size: 14px;
+  min-height: 40px;
+  padding: 7px 13px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.reader-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px 20px;
+  margin-top: 12px;
+  color: var(--muted);
+  font-size: 13px;
+}
+.reader-reason {
+  padding: 3px 7px;
+  border-radius: 4px;
+  background: var(--green-soft);
+  color: var(--green);
+}
+.reader-summary {
+  margin: 20px 0 24px;
+  max-width: 72ch;
+  font-size: 18px;
+  line-height: 1.6;
+  color: #59645d;
+}
+.reader-reminder {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 14px;
+  color: var(--muted);
+}
+.reader-metrics {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 20px;
+  padding: 24px 0;
+  border-top: 1px solid var(--line);
+}
+.reader-metrics > div + div {
+  border-left: 1px solid var(--line);
+  padding-left: 28px;
+}
+.reader-metrics span {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.reader-metrics strong {
+  display: block;
+  font-size: 42px;
+  font-weight: 600;
+  letter-spacing: -1px;
+  line-height: 1.2;
+  overflow-wrap: anywhere;
+}
+.reader-metrics > :nth-child(2) strong {
+  color: var(--green);
+}
+.reader-chart {
+  margin: 4px 0 28px;
+}
+.reader-chart-heading {
+  display: flex;
+  justify-content: space-between;
+  gap: 12px;
+  color: var(--muted);
+  font-size: 14px;
+}
+.reader-chart-canvas {
+  position: relative;
+  width: 100%;
+  height: 220px;
+  margin-top: 14px;
+}
+.reader-markdown {
+  max-width: 78ch;
+  color: var(--ink);
+  font-size: 17px;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.reader-markdown p,
+.reader-markdown li {
+  color: #59645d;
+  font-size: 17px;
+  line-height: 1.65;
+}
+.reader-markdown h1 {
+  font-size: 26px;
+  letter-spacing: -0.7px;
+}
+.reader-markdown h2,
+.reader-markdown h3 {
+  margin: 24px 0 8px;
+  font-size: 20px;
+  line-height: 1.35;
+}
+.reader-markdown pre {
+  max-width: 100%;
+  padding: 14px;
+  overflow: auto;
+  background: var(--canvas);
+  border-radius: 6px;
+}
+.reader-markdown img {
+  max-width: 100%;
+  height: auto;
+}
+.reader-markdown a,
+.reader-relevance a,
+.reader-sources p a {
+  color: var(--green);
+  text-decoration: underline;
+}
+.reader-markdown table {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+  border-collapse: collapse;
+  margin: 14px 0 20px;
+  font-size: 14px;
+}
+.reader-markdown th,
+.reader-markdown td {
+  padding: 8px 16px 8px 0;
+  border-bottom: 1px solid var(--line);
+  text-align: left;
+}
+.reader-report-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 20px 0;
+}
+.reader-sources,
+.reader-relevance {
+  margin-top: 24px;
+}
+.reader-sources h3,
+.reader-relevance h3 {
+  margin-bottom: 10px;
+  font-size: 18px;
+}
+.reader-sources > a,
+.reader-sources > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-height: 44px;
+  padding: 10px 0;
+  border-bottom: 1px solid var(--line-soft);
+  font-size: 14px;
+}
+.reader-sources > a {
+  color: var(--green);
+}
+.reader-sources > a:hover > span {
+  text-decoration: underline;
+}
+.reader-sources > a > span,
+.reader-sources > div > span {
+  overflow-wrap: anywhere;
+}
+.reader-sources small {
+  margin-left: auto;
+  color: var(--muted);
+  font-size: 12px;
+}
+.reader-sources svg {
+  flex: 0 0 auto;
+}
+.reader-relevance p,
+.reader-sources p {
+  margin: 8px 0;
+  font-size: 14px;
+}
+.reader-note {
+  flex: 0 0 auto;
+  border-top: 1px solid var(--line);
+  padding: 16px 32px 20px;
+  background: #fff;
+}
+.reader-note label {
+  display: block;
+  margin-bottom: 8px;
+  color: var(--ink);
+  font-size: 14px;
+  font-weight: 600;
+}
+.reader-note-input {
+  display: flex;
+  align-items: flex-start;
+  gap: 14px;
+}
+.reader-note-input .MuiOutlinedInput-root {
+  padding: 10px 12px;
+  border-radius: 6px;
+  font-size: 14px;
+  line-height: 1.5;
+}
+.reader-note-input .MuiButton-root {
+  min-height: 42px;
+  padding: 10px 18px;
+  border-radius: 6px;
+  white-space: nowrap;
+}
+.reader-note > [role="status"] {
+  display: block;
+  margin-top: 6px;
+  color: var(--green);
+  font-size: 13px;
+}
+.reader-note > .MuiAlert-root {
+  margin-top: 8px;
+}
+.reader-empty {
+  padding: 40px;
+  align-self: center;
+  justify-self: center;
+  color: var(--muted);
+}
+.reader-empty h2 {
+  font-size: 24px;
+}
+.reader-empty p {
+  font-size: 16px;
+}
+.mobile-reader-back {
+  display: none;
+}
+
+@media (max-width: 1100px) {
+  .topbar {
+    height: 124px;
+  }
+  main {
+    min-height: calc(100dvh - 124px);
+  }
+  .topbar-inner {
+    gap: 10px 16px;
+    padding: 12px 20px;
+    flex-wrap: wrap;
+  }
+  .main-navigation {
+    order: 2;
+  }
+  .portal-search {
+    order: 3;
+    max-width: none;
+    min-width: 115px;
+    height: 36px;
+  }
+  .topbar-actions {
+    order: 1;
+  }
+  .main-navigation a {
+    padding-inline: 9px;
+  }
+  .item-workspace {
+    height: calc(100dvh - 124px);
+    grid-template-columns: 300px minmax(0, 1fr);
+  }
+  .workspace-toolbar,
+  .queue-row {
+    padding-inline: 20px;
+  }
+  .queue-tools {
+    padding-inline: 20px;
+  }
+  .reader-scroll {
+    padding: 24px;
+  }
+  .reader-note {
+    padding-inline: 24px;
+  }
+}
+@media (max-width: 720px) {
+  main {
+    min-height: calc(100dvh - 124px);
+  }
+  .topbar {
+    height: 124px;
+  }
+  .topbar-inner {
+    height: 100%;
+    min-height: 0;
+    padding: 12px 16px;
+    flex-wrap: wrap;
+    gap: 10px 12px;
+  }
+  .brand {
+    font-size: 22px;
+  }
+  .brand-mark {
+    width: 29px;
+    height: 32px;
+  }
+  .main-navigation {
+    order: 2;
+    width: auto;
+    max-width: 100%;
+    gap: 2px;
+    overflow-x: auto;
+  }
+  .main-navigation a {
+    padding: 7px;
+    min-height: 34px;
+    font-size: 13px;
+  }
+  .main-navigation .navigation-count {
+    display: none;
+  }
+  .portal-search {
+    order: 3;
+    max-width: none;
+    min-width: 115px;
+    height: 36px;
+    padding-inline: 7px;
+  }
+  .portal-search input {
+    font-size: 13px;
+  }
+  .topbar-actions {
+    order: 1;
+    margin-left: auto;
+  }
+  .topbar-actions .MuiButton-root {
+    min-width: 0;
+    padding-inline: 8px;
+    font-size: 12px;
+  }
+  .item-workspace {
+    display: block;
+    height: calc(100dvh - 124px);
+  }
+  .workspace-list {
+    height: 100%;
+    border: 0;
+  }
+  .workspace-reader {
+    position: fixed;
+    inset: 0;
+    z-index: 20;
+  }
+  .reader-scroll {
+    padding: 12px 20px 24px;
+  }
+  .mobile-reader-back {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 16px;
+    color: var(--muted);
+    font-size: 14px;
+  }
+  .reader-header h2 {
+    flex-basis: 100%;
+    font-size: 26px;
+  }
+  .reader-actions {
+    gap: 6px;
+  }
+  .reader-actions .MuiButton-root {
+    padding-inline: 10px;
+    font-size: 13px;
+  }
+  .reader-summary {
+    font-size: 16px;
+  }
+  .reader-metrics {
+    gap: 10px;
+    padding-block: 20px;
+  }
+  .reader-metrics > div + div {
+    padding-left: 12px;
+  }
+  .reader-metrics strong {
+    font-size: 30px;
+  }
+  .reader-metrics span {
+    font-size: 13px;
+  }
+  .reader-chart-canvas {
+    height: 220px;
+  }
+  .reader-sources > a,
+  .reader-sources > div {
+    flex-wrap: wrap;
+    gap: 8px;
+  }
+  .reader-sources small {
+    flex-basis: calc(100% - 30px);
+    margin-left: 30px;
+  }
+  .reader-note {
+    padding: 12px 16px max(12px, env(safe-area-inset-bottom));
+  }
+  .reader-note-input {
+    gap: 8px;
+  }
+  .reader-note-input .MuiButton-root {
+    padding-inline: 12px;
+  }
+  .reader-empty {
+    display: none;
+  }
+  main > :not(.item-workspace):not(footer) {
+    margin: 20px;
+  }
+}
