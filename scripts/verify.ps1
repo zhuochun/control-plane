@@ -9,6 +9,8 @@ npm --prefix web run typecheck
 if ($LASTEXITCODE -ne 0) { throw 'web typecheck failed' }
 npm --prefix web run build
 if ($LASTEXITCODE -ne 0) { throw 'web build failed' }
+& (Join-Path $root 'scripts\check-go.ps1')
+if ($LASTEXITCODE -ne 0) { throw 'Go format and lint checks failed' }
 go vet ./...
 if ($LASTEXITCODE -ne 0) { throw 'go vet failed' }
 go test ./...

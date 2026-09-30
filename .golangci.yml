@@ -1,0 +1,22 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: standard
+  disable:
+    - errcheck
+  enable:
+    - revive
+  settings:
+    revive:
+      rules:
+        - name: early-return
+        - name: errorf
+        - name: indent-error-flow
+
+formatters:
+  enable:
+    - gofmt
+    - goimports
