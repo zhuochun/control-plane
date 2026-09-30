@@ -18,7 +18,17 @@ import (
 type Caller struct{ Client *client.Client }
 type empty struct{}
 type briefInput struct {
-	Cursor string `json:"cursor,omitempty" jsonschema:"Continuation cursor from an earlier brief page"`
+	Cursor string `json:"cursor,omitempty" jsonschema:"Live brief or captured Run continuation cursor; captured pages identify their Run"`
+}
+
+type itemLookup struct {
+	DedupeKey  string `json:"dedupe_key,omitempty"`
+	WatchID    string `json:"watch_id,omitempty"`
+	InterestID string `json:"interest_id,omitempty"`
+	Query      string `json:"query,omitempty"`
+	View       string `json:"view,omitempty"`
+	Cursor     string `json:"cursor,omitempty"`
+	Limit      int    `json:"limit,omitempty"`
 }
 type itemID struct {
 	ItemID string `json:"item_id"`
@@ -138,7 +148,7 @@ func New(serverURL, version string) *mcp.Server {
 			return respond(value, err)
 		})
 	}
-	mcp.AddTool(server, &mcp.Tool{Name: "get_brief", Description: "Preview aicp's active Interests, due Watches, unarchived Attention summaries, captured changes, contexts, and health. Read-only; follow continuation cursors until the requested collection is complete."}, func(ctx context.Context, _ *mcp.CallToolRequest, input briefInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "get_brief", Description: "Read a small live overview of focus, due work, failures, Attention samples, and pending-change counts without starting a Run. Live pages may drift. A Run-bound cursor instead reads immutable captured context; Attention pages are optional."}, func(ctx context.Context, _ *mcp.CallToolRequest, input briefInput) (*mcp.CallToolResult, map[string]any, error) {
 		path := "/brief"
 		if input.Cursor != "" {
 			path += "?cursor=" + url.QueryEscape(input.Cursor)
@@ -161,7 +171,7 @@ func New(serverURL, version string) *mcp.Server {
 		value, err := caller.call(ctx, http.MethodGet, "/changes?"+query.Encode(), nil)
 		return respond(value, err)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "start_run", Description: "Check in for one heartbeat, claim the single active run slot, and receive the authoritative bounded work packet. Active due Watches are selected by default; consume all Interest, Attention, and change continuations before finishing."}, func(ctx context.Context, _ *mcp.CallToolRequest, input startRunInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "start_run", Description: "Claim one source inspection Run and receive {run, context}. Read captured owner/agent context and all applicable Interest pages. Consume every captured change page before claiming complete handling or acknowledging the range. Global Attention is optional; each selected Watcher still needs a truthful terminal result."}, func(ctx context.Context, _ *mcp.CallToolRequest, input startRunInput) (*mcp.CallToolResult, map[string]any, error) {
 		body := map[string]any{"request_id": input.RequestID, "runner_label": input.RunnerLabel, "force": input.Force}
 		if input.WatchIDs != nil {
 			body["watch_ids"] = input.WatchIDs
@@ -194,6 +204,31 @@ func New(serverURL, version string) *mcp.Server {
 		value, err := caller.call(ctx, http.MethodGet, "/items/"+input.ItemID, nil)
 		return respond(value, err)
 	})
+	mcp.AddTool(server, &mcp.Tool{Name: "list_items", Description: "Find current Items by exact dedupe key, Watcher, Interest, literal text, or view before reconciling source evidence. Returns a bounded page and continuation. Shared source URLs do not imply a shared matter. Read full current state before updating."}, func(ctx context.Context, _ *mcp.CallToolRequest, input itemLookup) (*mcp.CallToolResult, map[string]any, error) {
+		query := url.Values{}
+		for key, value := range map[string]string{"dedupe_key": input.DedupeKey, "watch_id": input.WatchID, "interest_id": input.InterestID, "q": input.Query, "view": input.View, "cursor": input.Cursor} {
+			if value != "" {
+				query.Set(key, value)
+			}
+		}
+		limit := input.Limit
+		if limit == 0 {
+			limit = 20
+		}
+		query.Set("limit", strconv.Itoa(limit))
+		value, err := caller.call(ctx, http.MethodGet, "/items?"+query.Encode(), nil)
+		return respond(value, err)
+	})
+	for _, read := range []struct{ name, path, description string }{
+		{"get_status", "/status", "Read full operational health and unabridged failure errors on demand. Read-only; does not claim source work."},
+		{"get_settings", "/settings", "Read full current owner and agent context when a configuration or orientation task needs it. A source Run must use its captured context instead."},
+	} {
+		read := read
+		mcp.AddTool(server, &mcp.Tool{Name: read.name, Description: read.description}, func(ctx context.Context, _ *mcp.CallToolRequest, input empty) (*mcp.CallToolResult, map[string]any, error) {
+			value, err := caller.call(ctx, http.MethodGet, read.path, nil)
+			return respond(value, err)
+		})
+	}
 	mcp.AddTool(server, &mcp.Tool{Name: "get_context", Description: "Read one item with its bounded recent content history for reconciliation."}, func(ctx context.Context, _ *mcp.CallToolRequest, input itemID) (*mcp.CallToolResult, map[string]any, error) {
 		value, err := caller.call(ctx, http.MethodGet, "/items/"+input.ItemID+"/context", nil)
 		return respond(value, err)

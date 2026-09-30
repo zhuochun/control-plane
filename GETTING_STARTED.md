@@ -33,8 +33,8 @@ can assess all active Interests or only those explicitly linked to it.
    create personal Items; setup will keep showing what is missing.
 4. Run `aicp doctor --json` to see `health.setup`: owner context, active
    Interest, applicable active Watcher, and derived `done`. No onboarding
-   progress is stored. `aicp brief --json` previews context, due work, and
-   health without claiming a Run. A completed setup still needs a real
+   progress is stored. `aicp brief --json` previews focus, due work, failures,
+   Attention samples, and pending-change counts without claiming a Run. A completed setup still needs a real
    inspection before coverage is verified.
 
 To connect an MCP agent, register the executable's absolute path as a stdio
@@ -53,16 +53,23 @@ cadence does not mean a scheduler is running. Add external scheduling only
 after checking one real inspection and deciding how often you want it.
 
 If the agent uses the CLI, pass `--json` for compact output.
-`aicp run start --json` returns the first captured packet page. Follow every cursor under
-`brief.continuations` with `aicp brief --cursor <cursor> --json`. Follow
-`brief.changes_next_cursor` with the captured sequence bounds:
+`aicp run start --json` returns `{run, context}`. Read captured context and all
+applicable Interests. Follow `context.continuations.interests` with
+`aicp brief --cursor <cursor> --json`. Follow `context.continuations.changes`
+using `run.after_seq` and `run.through_seq`:
 
 ```text
 aicp changes --after-seq <after> --through-seq <through> --cursor <cursor> --json
 ```
 
-The CLI's `item list` returns current full Items; it does not replace the
-captured compact Attention pages.
+Global Attention is optional via `context.available.attention.cursor` and the
+same `brief --cursor` command. These pages say `consistency: captured`; a fresh
+brief says `consistency: live` and can change between calls. Unchanged Todos and
+due reminders remain user work, not automatic heartbeat obligations.
+Use `item list --dedupe-key <key>` or bounded `--watch`/`--query` filters to find
+an existing matter before updating it. Current Item reads retain the existing
+version/conflict rules. Complete captured change handling is required before
+acknowledgement; source coverage still requires a terminal result per Watcher.
 
 On return, open Attention for findings and actions, Monitoring for due reasons
 and coverage, Activity for Run history or interrupted Run recovery, and

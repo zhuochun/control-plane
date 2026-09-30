@@ -54,7 +54,7 @@ try {
       startBody.force = true;
     }
     const started = await call(`start_run_${cycle}`, "POST", "/runs", startBody);
-    const watches = started.brief.watches;
+    const watches = started.context.watches;
     if (watches.length === 0) throw new Error("Fixture selected no due Watchers");
     const mixedReads = cycle === 2 ? Promise.all([0, 1].map(async (reader) => {
       for (let i = 0; i < 10; i++) await call("mixed_read", "GET", reader === 0 ? "/status" : "/items?view=attention&limit=50");

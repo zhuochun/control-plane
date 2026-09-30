@@ -182,7 +182,7 @@ func main() {
 	}
 	started := call("start_run", "initial_packet", map[string]any{"request_id": "agent-eval-start", "runner_label": "agent-eval"})
 	run := asMap(started["run"])
-	brief := asMap(started["brief"])
+	brief := asMap(started["context"])
 	if mode == "multi-interest" {
 		foundBroad := false
 		for _, raw := range asList(brief["watches"]) {
@@ -198,10 +198,10 @@ func main() {
 			log.Fatal("no broad Watcher was selected")
 		}
 	}
-	counts := map[string]int{"interests": len(asList(brief["interests"])), "attention_items": len(asList(brief["attention_items"])), "changes": len(asList(brief["changes"]))}
+	counts := map[string]int{"interests": len(asList(brief["interests"])), "attention_items": 0, "changes": len(asList(brief["changes"]))}
 	duplicateContextPages := 0
 	continuations := asMap(brief["continuations"])
-	for _, collection := range []string{"interests", "attention_items"} {
+	for _, collection := range []string{"interests"} {
 		cursor, _ := continuations[collection].(string)
 		for cursor != "" {
 			page := call("get_brief", collection+"_continuation", map[string]any{"cursor": cursor})
@@ -218,9 +218,9 @@ func main() {
 			cursor, _ = page["next_cursor"].(string)
 		}
 	}
-	after := int64(brief["after_seq"].(float64))
-	through := int64(brief["through_seq"].(float64))
-	cursor, _ := brief["changes_next_cursor"].(string)
+	after := int64(run["after_seq"].(float64))
+	through := int64(run["through_seq"].(float64))
+	cursor, _ := continuations["changes"].(string)
 	for cursor != "" {
 		page := call("get_changes", "changes_continuation", map[string]any{"after_seq": after, "through_seq": through, "cursor": cursor})
 		counts["changes"] += len(asList(page["items"]))
@@ -230,10 +230,20 @@ func main() {
 	must(s.DB.QueryRowContext(ctx, "SELECT context_snapshot FROM runs WHERE id=?", run["id"]).Scan(&snapshotRaw))
 	var snapshot map[string]any
 	must(json.Unmarshal([]byte(snapshotRaw), &snapshot))
-	for _, collection := range []string{"interests", "attention_items"} {
-		if counts[collection] != len(asList(snapshot[collection])) {
-			log.Fatalf("%s pages incomplete: %d of %d", collection, counts[collection], len(asList(snapshot[collection])))
+	required := map[string]bool{}
+	for _, raw := range asList(brief["watches"]) {
+		for _, match := range asList(asMap(raw)["interests"]) {
+			required[asMap(match)["id"].(string)] = true
 		}
+	}
+	if counts["interests"] != len(required) {
+		log.Fatalf("required Interest pages incomplete: %d of %d", counts["interests"], len(required))
+	}
+	if _, mandatory := brief["attention_items"]; mandatory {
+		log.Fatal("default Run enumerated Attention")
+	}
+	if asMap(brief["overview"])["attention_count"] != float64(len(asList(snapshot["attention_items"]))) {
+		log.Fatal("optional Attention count omitted retained backlog")
 	}
 	var expectedChanges int
 	must(s.DB.QueryRowContext(ctx, "SELECT count(*) FROM events WHERE seq>? AND seq<=? AND (actor='user' OR entity_type='proposal')", after, through).Scan(&expectedChanges))
@@ -245,7 +255,12 @@ func main() {
 		corpus, readErr := os.ReadFile("scripts/perf/corpus/one-matter-source.json")
 		must(readErr)
 		inputs = append(inputs, tokenInput{Category: "external_source_material", Text: string(corpus)})
-		updatedItem = call("get_item", "item_detail", map[string]any{"item_id": targetID})
+		lookup := call("list_items", "item_lookup", map[string]any{"dedupe_key": "fixture:1", "limit": 1})
+		matches := asList(lookup["items"])
+		if len(matches) != 1 {
+			log.Fatal("existing matter was not discoverable without default Attention")
+		}
+		updatedItem = call("get_item", "item_detail", map[string]any{"item_id": asMap(matches[0])["id"]})
 		if updatedItem["id"] != targetID || updatedItem["content_version"] != float64(originalVersion) {
 			log.Fatal("detail read returned the wrong existing Item")
 		}

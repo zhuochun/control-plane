@@ -9,7 +9,7 @@ import (
 	"github.com/zhuochun/control-plane/internal/store"
 )
 
-func TestSettingsDefaultToBrowserAndTravelWithBrief(t *testing.T) {
+func TestSettingsTravelWithRunButNotLiveBrief(t *testing.T) {
 	ctx := context.Background()
 	s, err := store.Open(ctx, t.TempDir())
 	if err != nil {
@@ -36,9 +36,8 @@ func TestSettingsDefaultToBrowserAndTravelWithBrief(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contexts, ok := brief["contexts"].(map[string]string)
-	if !ok || contexts["AGENTS.md"] != settings.AgentsMD || contexts["USER.md"] != settings.UserMD {
-		t.Fatalf("brief contexts do not match settings: %#v", brief["contexts"])
+	if _, exists := brief["contexts"]; exists {
+		t.Fatal("live brief returned full contexts")
 	}
 
 	agents := "# Agent rules\n\nKeep it short."
@@ -65,9 +64,23 @@ func TestSettingsDefaultToBrowserAndTravelWithBrief(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	contexts, ok = brief["contexts"].(map[string]string)
-	if !ok || contexts["AGENTS.md"] != agents || contexts["USER.md"] != user {
-		t.Fatalf("updated contexts missing from brief: %#v", brief["contexts"])
+	if _, exists := brief["contexts"]; exists {
+		t.Fatal("live brief returned updated full contexts")
+	}
+	started, err := a.StartRun(ctx, StartRun{RequestID: "settings-run", WatchIDs: Field[[]string]{Set: true, Value: []string{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var packet struct {
+		Context struct {
+			Contexts map[string]string `json:"contexts"`
+		} `json:"context"`
+	}
+	if err = json.Unmarshal(started, &packet); err != nil {
+		t.Fatal(err)
+	}
+	if packet.Context.Contexts["AGENTS.md"] != agents || packet.Context.Contexts["USER.md"] != user {
+		t.Fatalf("captured contexts missing: %+v", packet)
 	}
 }
 

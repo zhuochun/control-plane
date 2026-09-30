@@ -4,7 +4,7 @@
 - Status: Deterministic MCP evaluation implemented.
 - Domain language: [glossary](../glossary.md)
 - Existing workload baseline: [long-term performance specification](20260928-long-term-performance-test-spec.md)
-- Current agent journey: [heartbeat specification](20260916-agent-experience-and-heartbeat-spec.md) and [packaged prompt](../../examples/heartbeat-prompt.md)
+- Current agent journey: [Run context and brief](20260930-run-context-and-brief-spec.md) and [packaged prompt](../../examples/heartbeat-prompt.md)
 
 ## Outcome and boundary
 
@@ -21,21 +21,21 @@ synthetic source corpus. Report aicp packet and MCP costs separately from
 source material. The reference tokenizer is a payload proxy, not a measure of
 provider-billed tokens or independent agent decision quality.
 
-This specification defines evaluation obligations. The follow-up implementation
-removed repeated context files from continuation pages and added settings size
-limits; neither changes which Interest, Attention, or change pages must be read.
-Any further reduction in required context needs its own compatibility and
-correctness review.
+The 2026-09-28 baseline measured the former requirement to read every Attention
+summary. The 2026-09-30 contract makes that collection optional, keeps applicable
+Interest instructions and captured changes required, and adds bounded Item
+lookup. Comparisons must identify the reading contract used by each trace.
 
 ## Current behavior and evaluation obligation
 
-`start_run` selects due Watchers and returns the first bounded page of a captured
-snapshot. The agent must consume all active Interest and unarchived Attention
-summary pages and the captured change range before relying on older assumptions
-or finishing. Watcher entries refer to Interest instructions rather than copying
-them. `get_item` and `get_context` reveal full Item detail only when needed for
-reconciliation. Each selected Watcher needs one truthful terminal result;
-acknowledgement covers only changes fully consumed and durably reflected.
+`start_run` returns `{run, context}`. Required context comprises captured owner
+and agent guidance, selected Watchers and prior coverage/limitations, applicable
+Interest instructions, and the captured user/Proposal event range. Global
+Attention is represented by counts and an optional snapshot cursor. Watcher
+entries do not embed recent Item lists. `list_items` locates continuing matters;
+`get_item` and `get_context` supply current detail for reconciliation. Each
+selected Watcher needs one truthful terminal result. Acknowledgement covers
+only changes fully consumed and durably reflected.
 
 The packet includes stored `AGENTS.md` and `USER.md` once. The previous
 `BriefPage` also included both on every continuation; the evaluator retains
@@ -44,7 +44,7 @@ them. `web/perf/heartbeat.mjs` continues to measure HTTP publication latency;
 the separate MCP evaluator consumes the packet continuations and counts
 reference tokens.
 
-The first packet page retains 50 entries per collection. Continuations may
+The first required Interest page retains up to 50 entries. Continuations may
 carry up to 150 entries, targeting 64 KiB of items per page; one oversized
 entry is returned alone to preserve progress. Agent-facing
 Attention entries omit user-state and acknowledgement versions. An Item
@@ -53,15 +53,17 @@ change range; open Todos and due reminders still follow Attention rules.
 Title, summary, and Interest
 reason text are capped at 256, 512, and 256 UTF-8 bytes in this projection;
 `truncated_fields` identifies omissions. The full Item remains available from
-`get_item`. Correctness comparisons must still verify every captured entry and
-read full detail when a truncated entry may matter. Run snapshots and retry
-receipts retain full captured text; truncation is applied only when a response
-is rendered. The version 6 data migration converts older response fields while
-preserving the full text in existing Run snapshots and retry receipts.
+`get_item`. Explicit optional-Attention reads still verify their captured range
+and read full detail when omitted text matters. Run snapshots retain full
+Attention text; required packet receipts retain captured instructions and
+events. Version 7 converts older Run-start receipts to the new response while
+preserving the optional full context in the Run snapshot.
 
-Progressive disclosure therefore means choosing when to read full Item content
-and history after the complete compact snapshot has been consumed. It does not
-mean skipping mandatory Interest, Attention, or change pages. The evaluator
+Progressive disclosure means finding the Items needed for actual source evidence
+or user changes, without first enumerating the global Attention backlog.
+Do not skip required Interest or event pages. Quiet and source-reconciliation
+cases read zero optional Attention summaries; this is not evidence that the
+user's entire Attention queue was reviewed. The evaluator
 distinguishes bytes transferred from reference tokens in the two MCP result
 representations; neither measure establishes billed model usage.
 
@@ -75,8 +77,8 @@ These are workload assumptions, not claims about a typical user's data.
 | Scenario | Fixed situation and expected agent decision | Cost or risk exposed |
 | --- | --- | --- |
 | Quiet heartbeat | Few due Watchers; no new relevant source evidence; an aged library and a small Attention set. Read the complete packet, submit honest empty successful results, finish. | Fixed cost per useful no-change Run. |
-| Large Attention set | The same due Watchers and source evidence with 1% versus 20% of Items in Attention; most summaries are unrelated to today's source input. Consume all pages and avoid unnecessary full Item reads. | Required summary cost and repeated context across pages. |
-| One changed matter | Several plausible related summaries, one existing Item supported by new evidence, and at least one distinct Item sharing its source URL. Read the correct Item before updating; retain its identity and user state. | Detail-read selectivity without a false merge or duplicate. |
+| Large Attention set | Same due Watchers/source evidence with 1% versus 20% of Items in Attention. Verify captured counts without enumerating optional summaries. | Required packet cost should remain independent of unchanged backlog size. |
+| One changed matter | One older Item supported by new evidence and a distinct Item sharing its source URL. Locate the correct Item through bounded MCP lookup before reading/updating it; retain identity and user state. | Reconciliation without an initial global Item list, false merge, or duplicate. |
 | Many applicable Interests | One broad Watcher assessed against several active Interests and one focused Watcher assessed against its explicit links. Use the captured Interest revisions and relevance reasons. | Instruction duplication, association handling, and assessment coverage. |
 | Change backlog | A narrow recent change range versus many unacknowledged events, including a user action and a configuration revision. Follow every event page and acknowledge only the fully handled captured range. | Backlog scaling and premature acknowledgement. |
 | Retry and incomplete source read | An uncertain submission response followed by replay with the same request ID; another Watcher has partial or failed source access. Reuse the request ID, report limitations, and preserve the unsuccessful Watcher's cursor. | Extra work, duplicate publication, and false coverage. |
@@ -107,11 +109,12 @@ The CLI output slice uses the same tokenizer on exact stdout, including its
 trailing newline. Run matched fixtures separately for default pretty JSON and
 `--json`; break down status, settings, list pages, record detail, preview,
 change pages, Run start, submission, finish, and history. Follow every captured
-Interest and Attention cursor through `brief --cursor` and every remaining
+required Interest cursor through `brief --cursor` and every remaining
 change cursor through `changes --cursor`; validate counts against the Run
-snapshot and final Run state. CLI `item list` provides current full Item records
-rather than captured snapshot continuations. Report this alternative retrieval
-path separately from the compact Run packet and MCP totals.
+selected Interest set and final Run state. Explicit whole-Attention CLI listing
+is an alternative user-review path, reported separately from required Run reads;
+it must not be charged as mandatory source context or used to locate the MCP
+reconciliation target.
 
 Report total Run cost and useful finding count, including zero-finding cases
 without dividing by zero. Show tool-call count, full-detail reads, cumulative
@@ -142,8 +145,9 @@ first clean run to establish those values.
 - **AE-01 — Reproducible accounting:** A matched replay attributes every
   model-visible tool response to a category, reports total and duplicate tokens
   with a pinned tokenizer, and retains the raw byte and latency measures.
-- **AE-02 — Complete compact context:** Large Attention and change backlogs are
-  consumed without silent truncation; the trace exposes all continuation costs.
+- **AE-02 — Complete required context:** Applicable Interest and change pages
+  are consumed without silent omission; optional Attention remains retained and
+  queryable without adding mandatory summaries to quiet Runs.
 - **AE-03 — Selective detail:** The one-matter case reaches the correct Item and
   reconciles it without reading unrelated full histories or merging distinct
   Items that share a source URL.

@@ -56,7 +56,7 @@ func TestBroadAndExplicitWatchersKeepIndependentCheckpoints(t *testing.T) {
 		Run   Run `json:"run"`
 		Brief struct {
 			Watches []SelectedWatch `json:"watches"`
-		} `json:"brief"`
+		} `json:"context"`
 	}
 	if err = json.Unmarshal(raw, &packet); err != nil {
 		t.Fatal(err)

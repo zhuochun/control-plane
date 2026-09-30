@@ -17,7 +17,18 @@ test("inbox capture accepts one piece of information and offers it to the next r
   expect(item.report.body_md).toBe(content);
   await expect(dialog).toHaveCount(0);
   const brief = await (await request.get("/api/v1/brief")).json();
-  expect(brief.changes_items.some((event: { entity_id: string; change_type: string; actor: string }) => event.entity_id === item.id && event.change_type === "item.created" && event.actor === "user")).toBeTruthy();
+  expect(brief.consistency).toBe("live");
+  expect(brief.pending_changes.count).toBeGreaterThan(0);
+  let cursor: string | undefined;
+  let found = false;
+  do {
+    const params = new URLSearchParams({ after_seq: String(brief.pending_changes.after_seq), through_seq: String(brief.pending_changes.through_seq) });
+    if (cursor) params.set("cursor", cursor);
+    const changes = await (await request.get(`/api/v1/changes?${params}`)).json();
+    found ||= changes.items.some((event: { entity_id: string; change_type: string; actor: string }) => event.entity_id === item.id && event.change_type === "item.created" && event.actor === "user");
+    cursor = changes.next_cursor;
+  } while (cursor);
+  expect(found).toBeTruthy();
 });
 
 test("queue and Workspace pages fit phone, tablet, and desktop widths", async ({ page }) => {

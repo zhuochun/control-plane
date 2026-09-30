@@ -90,17 +90,20 @@ and 250 synthetic changes. They count exact stdout from both `--json` and the
 default pretty JSON rendering, including its shortened display IDs. The sample
 covers status, settings, Interest and Watcher lists/details, Run and proposal
 lists, one Item detail, all 20 full Attention Item list pages, `brief` preview,
-`run start`, every captured Interest and Attention continuation via `brief
+`run start`, every required Interest continuation via `brief
 --cursor`, the remaining change pages, three `run submit` calls, `run finish`,
 and `run get`. Each output is counted by command category; only aggregate
-counts are saved. The evaluator asserts that the CLI consumed the full captured
-snapshot. CLI `item list` pages return current full Items, so their cost is
-reported separately from the compact Run packet.
+counts are saved. The evaluator asserts complete required Interest and change
+reading and retained optional Attention counts. CLI whole-Attention `item list`
+pages are an explicit alternative review path, reported separately from source
+Run packet cost. MCP reconciliation uses bounded lookup before reading detail.
 
-The first packet keeps a 50-entry limit. Captured Interest and Attention
+The Run packet uses `{run, context}` and does not enumerate global Attention.
+The first required Interest page keeps a 50-entry limit. Captured Interest and optional Attention
 continuations allow up to 150 entries with a 64 KiB item-array target; a single
 oversized entry is still returned so paging can progress. Attention entries
 omit user-state and acknowledgement versions, and cap title, summary, and Interest reason text
 at 256, 512, and 256 UTF-8 bytes. `truncated_fields` marks entries that need a
 full `get_item` read when their omitted text matters. The source Item remains
-unchanged, and the captured Run snapshot and retry receipt retain full text.
+unchanged, and the captured Run snapshot retains full optional Attention text.
+Packet receipts preserve required captured instructions, limitations, and events.

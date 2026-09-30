@@ -82,7 +82,7 @@ function Activity() {
         runner_label: string;
         status: string;
         started_at: string;
-        selected_watches: unknown[];
+        selected_count: number;
         summary: string;
       }[]; next_cursor: string | null}>("/runs?limit=20"),
   });
@@ -144,8 +144,8 @@ function Activity() {
               <strong>{run.runner_label}</strong>
               <small>
                 {formatDateTime(run.started_at, settings.data?.timezone)} ·{" "}
-                {run.selected_watches.length}{" "}
-                {run.selected_watches.length === 1 ? "Watch" : "Watches"}
+                {run.selected_count}{" "}
+                {run.selected_count === 1 ? "Watch" : "Watches"}
               </small>
               {run.summary && <p>{run.summary}</p>}
             </div>

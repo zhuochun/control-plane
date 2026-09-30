@@ -99,12 +99,14 @@ aicp is the local control plane, not the source connector or scheduler. An
 external heartbeat starts the agent, and the agent uses its existing tools to
 inspect sources:
 
-1. Call `start_run`. aicp returns each active Interest once, bounded pages of
-   unarchived Attention summaries, due Watch snapshots, contexts, and the
-   captured change range.
-2. Consume all continuation cursors, then inspect only the selected Watchers
+1. Call `start_run`. aicp returns `{run, context}` with captured owner/agent
+   context, applicable Interest instructions, selected Watcher snapshots and
+   prior limitations, the captured change range, and overview counts. Global
+   Attention is optional, not a mandatory backlog review.
+2. Read all applicable Interest pages and captured changes, then inspect only the selected Watchers
    with the agent's Slack, browser, GitHub, Drive, or other tools. aicp never
-   receives source credentials or fetches those systems.
+   receives source credentials or fetches those systems. Find existing matters
+   through bounded `list_items` / `item list` lookup before updating them.
 3. Call `submit_watch_findings` once per selected Watcher. The result records
    coverage, limitations, the next cursor, and zero or more Item upserts. If a
    Item names the captured Interest reasons and concrete source references.

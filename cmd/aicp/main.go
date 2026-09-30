@@ -232,7 +232,7 @@ GETTING_STARTED.md for the full agent-assisted path.`, SilenceUsage: true, Silen
 	root.AddCommand(changesCommand(printResult))
 	root.AddCommand(proposalCommand(printResult))
 	var briefCursor string
-	brief := &cobra.Command{Use: "brief", Args: cobra.NoArgs, Short: "Read due work and human changes", RunE: func(cmd *cobra.Command, args []string) error {
+	brief := &cobra.Command{Use: "brief", Args: cobra.NoArgs, Short: "Read a live overview without claiming source work", RunE: func(cmd *cobra.Command, args []string) error {
 		path := "/brief"
 		if briefCursor != "" {
 			path += "?cursor=" + url.QueryEscape(briefCursor)

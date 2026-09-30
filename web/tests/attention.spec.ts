@@ -239,10 +239,9 @@ test("preferences keep browser defaults and expose agent context", async ({
   const brief = await request.get("/api/v1/brief");
   expect(brief.ok()).toBeTruthy();
   const body = await brief.json();
-  expect(body.contexts["AGENTS.md"]).toBe(
-    "# Agent rules\n\nRead the brief first.",
-  );
-  expect(body.contexts["USER.md"]).toBe("# Owner\n\nPrefer concise evidence.");
+  expect(body.consistency).toBe("live");
+  expect(body.contexts).toBeUndefined();
+  expect(settingsBody.user_md).toBe("# Owner\n\nPrefer concise evidence.");
 
   await page.getByRole("button", { name: "Reset to default" }).first().click();
   await expect(page.getByLabel("Agent instructions")).toHaveValue(settingsBody.default_agents_md);
