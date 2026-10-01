@@ -7,10 +7,11 @@ const binary =
 export default defineConfig({
   testDir: "./tests",
   outputDir: "./test-results",
+  workers: 1,
   reporter: "line",
   use: { baseURL: "http://127.0.0.1:7331", trace: "retain-on-failure" },
   webServer: {
-    command: `"${binary}" serve --data-dir test-results/e2e-data`,
+    command: `"${binary}" serve --data-dir test-results/e2e-data-${process.pid}`,
     url: "http://127.0.0.1:7331/healthz",
     reuseExistingServer: false,
   },
