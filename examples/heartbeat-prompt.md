@@ -10,3 +10,45 @@ Use the configured aicp MCP tools to complete one truthful heartbeat:
 6. Call `finish_run` with a short source-coverage summary only after every selected Watcher has a terminal result. Acknowledge only the captured change range you fully consumed and durably reflected; otherwise finish without acknowledgement so it can replay. Do not claim global Attention was reviewed merely because the Run finished.
 
 The aicp server records work; it does not browse sources or start another agent.
+
+## Autonomous follow-through
+
+Within the person's existing authority, advance actionable findings yourself or
+delegate using your own tools. Read current applicable guidance and use
+`list_items` with `delegation_status: "pending,blocked"` to recover unfinished
+work, even when no Watcher is due. Follow-through needs no dummy source Run.
+Do not treat Attention or a user's Todo as automatic authority to execute.
+Choose and explain reasonable defaults for low-risk, reversible details within
+scope. Do not manufacture a human question for every task; bring material
+decisions with evidence and a recommendation.
+
+Before external handoff, use `update_item_work` to record a pending delegation
+on the existing Item. Retain its stable ID, intended executor, instructions,
+input Item version and relevant source/instruction basis, and launch uncertainty.
+After launch, save the returned external session/task reference and a concise
+description of its system and continuation tools in delegation context. Give the executor
+only the assigned Item ID, delegation ID, evidence and constraints it needs.
+
+An executor can use `get_item` and `update_item_work` directly without starting
+a Run, listing the global inbox, or reading unrelated configuration. Identify the
+input version and requirements actually used in result context, preserve other
+content/delegations, and leave delivery pending for primary-agent judgment.
+Without aicp access, return through the original mechanism for the primary agent
+to import. Use current content versions and request IDs. On `content_conflict`,
+reread and merge with current content before retrying with its version and a new
+request ID. The primary may have saved the session reference after your first
+read: omit `external_ref` from executor patches to retain it. Only reuse a request
+ID for an identical retry whose outcome is uncertain. Preserve earlier report
+conclusions and continuation instructions when replacing Markdown fields.
+
+Use the short [executor handoff example](delegation-handoff.md) rather than
+repeating the global heartbeat protocol in each assignment.
+
+Close follow-up only after supported results and repair references are persisted.
+Rework uses the same delegation ID and external reference; record previous
+executor/references in context when transferring. Omitted fields retain values,
+empty delegation lists remove nothing, and user-owned state remains untouched.
+Scan publication preserves delegated report/context. Use `update_item_work` to
+reconcile new source evidence with research after publication. Ask the person
+only for material decisions, missing authority, or unresolved blockers, with
+evidence and a recommendation.

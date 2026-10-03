@@ -26,7 +26,7 @@ func itemRoutes(mux *http.ServeMux, a *app.App) {
 			}
 			afterID = string(decoded)
 		}
-		items, more, err := a.ItemsPage(r.Context(), app.ItemFilters{View: r.URL.Query().Get("view"), Kind: r.URL.Query().Get("kind"), InterestID: r.URL.Query().Get("interest_id"), WatchID: r.URL.Query().Get("watch_id"), Query: r.URL.Query().Get("q"), DedupeKey: r.URL.Query().Get("dedupe_key")}, afterID, limit)
+		items, more, err := a.ItemsPage(r.Context(), app.ItemFilters{View: r.URL.Query().Get("view"), Kind: r.URL.Query().Get("kind"), InterestID: r.URL.Query().Get("interest_id"), WatchID: r.URL.Query().Get("watch_id"), Query: r.URL.Query().Get("q"), DedupeKey: r.URL.Query().Get("dedupe_key"), DelegationStatus: r.URL.Query().Get("delegation_status"), Executor: r.URL.Query().Get("executor"), ExternalRef: r.URL.Query().Get("external_ref")}, afterID, limit)
 		if err != nil {
 			return nil, err
 		}
@@ -42,6 +42,9 @@ func itemRoutes(mux *http.ServeMux, a *app.App) {
 	mux.HandleFunc("POST /api/v1/items/interest", command(func(r *http.Request, input app.PutItem) (any, error) { return a.UpsertInterestItem(r.Context(), input) }))
 	mux.HandleFunc("PUT /api/v1/items/{id}", command(func(r *http.Request, input app.PutItem) (any, error) {
 		return a.PutItem(r.Context(), r.PathValue("id"), input)
+	}))
+	mux.HandleFunc("PATCH /api/v1/items/{id}/work", command(func(r *http.Request, input app.UpdateItemWork) (any, error) {
+		return a.UpdateItemWork(r.Context(), r.PathValue("id"), input)
 	}))
 	mux.HandleFunc("POST /api/v1/items/{id}/actions", command(func(r *http.Request, input app.ApplyItemAction) (any, error) {
 		return a.ApplyItemAction(r.Context(), r.PathValue("id"), input)

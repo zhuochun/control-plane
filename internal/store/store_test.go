@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"path/filepath"
 	"strings"
@@ -73,7 +74,7 @@ func TestAttentionSnapshotMigrationFromVersion5(t *testing.T) {
 		}
 	})
 	var version int64
-	if err = opened.DB.QueryRowContext(ctx, `SELECT max(version_id) FROM goose_db_version WHERE is_applied=1`).Scan(&version); err != nil || version != 7 {
+	if err = opened.DB.QueryRowContext(ctx, `SELECT max(version_id) FROM goose_db_version WHERE is_applied=1`).Scan(&version); err != nil || version != 9 {
 		t.Fatalf("schema version %d: %v", version, err)
 	}
 	var savedContext, savedWatches, status string
@@ -290,5 +291,75 @@ func TestFutureSchemaFailsWithoutReset(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "upgrade") {
 		t.Fatalf("expected upgrade guidance: %v", err)
+	}
+}
+
+func TestDelegationGuidanceUpgradePreservesOwnerEdits(t *testing.T) {
+	for _, fromVersion := range []int64{7, 8} {
+		t.Run(fmt.Sprint(fromVersion), func(t *testing.T) {
+			for _, custom := range []bool{false, true} {
+				t.Run(fmt.Sprint(custom), func(t *testing.T) {
+					ctx := context.Background()
+					dir := t.TempDir()
+					db, err := sql.Open("sqlite", filepath.Join(dir, "aicp.db"))
+					if err != nil {
+						t.Fatal(err)
+					}
+					source, err := fs.Sub(migrations, "migrations")
+					if err != nil {
+						t.Fatal(err)
+					}
+					provider, err := goose.NewProvider(goose.DialectSQLite3, db, source, goose.WithGoMigrations(
+						goose.NewGoMigration(6, &goose.GoFunc{RunTx: migrateAttentionSnapshots}, nil),
+						goose.NewGoMigration(7, &goose.GoFunc{RunTx: migrateInspectionReceipts}, nil),
+						goose.NewGoMigration(8, &goose.GoFunc{RunTx: migrateDelegationGuidance}, nil)))
+					if err != nil {
+						t.Fatal(err)
+					}
+					if _, err = provider.UpTo(ctx, fromVersion); err != nil {
+						t.Fatal(err)
+					}
+					if custom {
+						if _, err = db.ExecContext(ctx, "UPDATE settings SET value='Owner instructions' WHERE key='agents_md'"); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if err = db.Close(); err != nil {
+						t.Fatal(err)
+					}
+					s, err := Open(ctx, dir)
+					if err != nil {
+						t.Fatal(err)
+					}
+					t.Cleanup(func() {
+						if err := s.Close(); err != nil {
+							t.Error(err)
+						}
+					})
+					if err = s.migrate(ctx); err != nil {
+						t.Fatal(err)
+					}
+					var guidance, recommended string
+					if err = s.DB.QueryRowContext(ctx, "SELECT value FROM settings WHERE key='agents_md'").Scan(&guidance); err != nil {
+						t.Fatal(err)
+					}
+					if err = s.DB.QueryRowContext(ctx, "SELECT value FROM settings WHERE key='default_agents_md'").Scan(&recommended); err != nil {
+						t.Fatal(err)
+					}
+					if !strings.Contains(recommended, "update_item_work") || strings.Count(recommended, "## Autonomous follow-through") != 1 {
+						t.Fatalf("missing/duplicated guidance: %s", recommended)
+					}
+					if strings.Count(recommended, "## Practical delegation handoff") != 1 || !strings.Contains(recommended, "low-risk, reversible") || !strings.Contains(recommended, "content_conflict") {
+						t.Fatalf("missing/duplicated handoff guidance: %s", recommended)
+					}
+					if custom && guidance != "Owner instructions" {
+						t.Fatalf("overwrote owner instructions: %s", guidance)
+					}
+					if !custom && guidance != recommended {
+						t.Fatalf("untouched defaults not upgraded: %s", guidance)
+					}
+				})
+			}
+		})
 	}
 }

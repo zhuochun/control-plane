@@ -22,13 +22,20 @@ type briefInput struct {
 }
 
 type itemLookup struct {
-	DedupeKey  string `json:"dedupe_key,omitempty"`
-	WatchID    string `json:"watch_id,omitempty"`
-	InterestID string `json:"interest_id,omitempty"`
-	Query      string `json:"query,omitempty"`
-	View       string `json:"view,omitempty"`
-	Cursor     string `json:"cursor,omitempty"`
-	Limit      int    `json:"limit,omitempty"`
+	DedupeKey        string `json:"dedupe_key,omitempty"`
+	WatchID          string `json:"watch_id,omitempty"`
+	InterestID       string `json:"interest_id,omitempty"`
+	Query            string `json:"query,omitempty"`
+	View             string `json:"view,omitempty"`
+	Cursor           string `json:"cursor,omitempty"`
+	Limit            int    `json:"limit,omitempty"`
+	DelegationStatus string `json:"delegation_status,omitempty"`
+	Executor         string `json:"executor,omitempty"`
+	ExternalRef      string `json:"external_ref,omitempty"`
+}
+type workInput struct {
+	ItemID string             `json:"item_id"`
+	Update app.UpdateItemWork `json:"update"`
 }
 type itemID struct {
 	ItemID string `json:"item_id"`
@@ -204,9 +211,13 @@ func New(serverURL, version string) *mcp.Server {
 		value, err := caller.call(ctx, http.MethodGet, "/items/"+input.ItemID, nil)
 		return respond(value, err)
 	})
+	mcp.AddTool(server, &mcp.Tool{Name: "update_item_work", Description: "Update an assigned Item without a Run: replace report/context, add evidence, and merge delegations by ID. Read get_item first; preserve prior conclusions, report actions, and continuation context. Omitted fields retain content; empty lists remove nothing. Executor patches should omit external_ref and leave delivery pending for primary review. Identify the input version and requirements actually used. On content_conflict, reread, merge, and retry with current expected_content_version and a new request_id; reuse IDs only for identical uncertain retries. Does not change provenance, relevance or user state."}, func(ctx context.Context, _ *mcp.CallToolRequest, input workInput) (*mcp.CallToolResult, map[string]any, error) {
+		value, err := caller.call(ctx, http.MethodPatch, "/items/"+url.PathEscape(input.ItemID)+"/work", input.Update)
+		return respond(value, err)
+	})
 	mcp.AddTool(server, &mcp.Tool{Name: "list_items", Description: "Find current Items by exact dedupe key, Watcher, Interest, literal text, or view before reconciling source evidence. Returns a bounded page and continuation. Shared source URLs do not imply a shared matter. Read full current state before updating."}, func(ctx context.Context, _ *mcp.CallToolRequest, input itemLookup) (*mcp.CallToolResult, map[string]any, error) {
 		query := url.Values{}
-		for key, value := range map[string]string{"dedupe_key": input.DedupeKey, "watch_id": input.WatchID, "interest_id": input.InterestID, "q": input.Query, "view": input.View, "cursor": input.Cursor} {
+		for key, value := range map[string]string{"dedupe_key": input.DedupeKey, "watch_id": input.WatchID, "interest_id": input.InterestID, "q": input.Query, "view": input.View, "cursor": input.Cursor, "delegation_status": input.DelegationStatus, "executor": input.Executor, "external_ref": input.ExternalRef} {
 			if value != "" {
 				query.Set(key, value)
 			}

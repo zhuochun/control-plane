@@ -9,11 +9,11 @@ import (
 
 func itemCommand(send request) *cobra.Command {
 	root := &cobra.Command{Use: "item", Short: "Read and save items"}
-	var view, kind, interestID, watchID, query, dedupeKey, cursor string
+	var view, kind, interestID, watchID, query, dedupeKey, cursor, delegationStatus, executor, externalRef string
 	var limit int
 	list := &cobra.Command{Use: "list", Args: cobra.NoArgs, RunE: func(cmd *cobra.Command, args []string) error {
 		values := url.Values{"limit": {fmt.Sprint(limit)}, "view": {view}}
-		for key, value := range map[string]string{"kind": kind, "interest_id": interestID, "watch_id": watchID, "q": query, "dedupe_key": dedupeKey, "cursor": cursor} {
+		for key, value := range map[string]string{"kind": kind, "interest_id": interestID, "watch_id": watchID, "q": query, "dedupe_key": dedupeKey, "cursor": cursor, "delegation_status": delegationStatus, "executor": executor, "external_ref": externalRef} {
 			if value != "" {
 				values.Set(key, value)
 			}
@@ -27,6 +27,9 @@ func itemCommand(send request) *cobra.Command {
 	list.Flags().StringVar(&query, "query", "", "Literal title, summary, or context search")
 	list.Flags().StringVar(&dedupeKey, "dedupe-key", "", "Match one exact deduplication key")
 	list.Flags().StringVar(&cursor, "cursor", "", "Continuation cursor")
+	list.Flags().StringVar(&delegationStatus, "delegation-status", "", "Comma-separated pending, blocked, or closed")
+	list.Flags().StringVar(&executor, "executor", "", "Exact executing agent/system identity")
+	list.Flags().StringVar(&externalRef, "external-ref", "", "Exact external continuation reference")
 	list.Flags().IntVar(&limit, "limit", 50, "Page size (1–100)")
 	root.AddCommand(list)
 	root.AddCommand(&cobra.Command{Use: "get <id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
@@ -66,6 +69,17 @@ func itemCommand(send request) *cobra.Command {
 	upsert.Flags().StringVar(&upsertFile, "file", "", "JSON Item payload, or - for stdin")
 	_ = upsert.MarkFlagRequired("file")
 	root.AddCommand(upsert)
+	var workFile string
+	work := &cobra.Command{Use: "work <id>", Args: cobra.ExactArgs(1), Short: "Update existing Item work without a source Run", RunE: func(cmd *cobra.Command, args []string) error {
+		body, err := commandFile(cmd, workFile)
+		if err != nil {
+			return err
+		}
+		return send(cmd, "PATCH", "/items/"+url.PathEscape(args[0])+"/work", body)
+	}}
+	work.Flags().StringVar(&workFile, "file", "", "JSON work update, or - for stdin")
+	_ = work.MarkFlagRequired("file")
+	root.AddCommand(work)
 	for _, operation := range []string{"action", "note"} {
 		operation := operation
 		var file string

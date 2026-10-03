@@ -39,6 +39,27 @@ link. Agent-published source findings cite a Watcher, source reference, and
 one or more Interest reasons. A **Proposal** is an agent-suggested configuration
 change for review; it does not change configuration automatically.
 
+An Item can also retain small **delegation records**: who received work, its
+external continuation reference, instructions, and pending/blocked/closed
+follow-up. The primary agent chooses and launches executors through its own
+tools. Executors can read and update their assigned Item using
+`update_item_work`, without starting a source Run or reading the global inbox.
+Work updates preserve identity, provenance, Interest relevance, and user state.
+See the [Item-local delegation contract](docs/specs/20261002-agent-delegation-and-receipts-spec.md).
+For a short executor assignment and work-update example, use the
+[delegation handoff guide](examples/delegation-handoff.md).
+
+```powershell
+.\dist\aicp.exe item list --delegation-status pending,blocked --json
+.\dist\aicp.exe item work <item-id> --file work-update.json
+```
+
+Work payloads require `expected_content_version`; supplied report/context fields
+replace those fields after reconciliation. Delegation patches merge by ID, omitted
+fields remain, and empty lists remove nothing. Source scans retain delegated
+report/context; use work updates to reconcile new evidence with research. Global
+autonomous-follow-through guidance is in the application-configured `AGENTS.md`.
+
 ## Build from source
 
 Development requires Node.js 24 and the Go version pinned in `go.mod`. The

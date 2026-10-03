@@ -38,6 +38,12 @@ checkpoints, and history. A running inspection uses its captured configuration;
 later configuration edits apply to later runs. Source results must preserve
 user-owned Item state. See the current specification for the exact rules.
 
+Item-local delegations and existing-Item work updates are owned by
+`internal/app/item_work.go` and the shared Item versioning path. The
+[delegation contract](specs/20261002-agent-delegation-and-receipts-spec.md)
+describes external-agent continuation and bounded recovery. aicp stores handoffs;
+the primary agent launches and communicates with executors outside this runtime.
+
 ## Find the owner of a change
 
 | Change or question | Start here | Follow through |

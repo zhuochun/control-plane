@@ -344,7 +344,7 @@ func TestVersionSixStartReceiptReplaysNewCapturedContract(t *testing.T) {
 	if _, err = a.UpdateInterest(ctx, ids[10], UpdateInterest{ExpectedRevision: 1, InstructionsMD: Field[string]{Set: true, Value: "Changed live instructions"}}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = s.DB.ExecContext(ctx, "DELETE FROM goose_db_version WHERE version_id=7"); err != nil {
+	if _, err = s.DB.ExecContext(ctx, "DELETE FROM goose_db_version WHERE version_id>=7"); err != nil {
 		t.Fatal(err)
 	}
 	if err = s.Close(); err != nil {

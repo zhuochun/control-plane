@@ -58,9 +58,10 @@ type Report struct {
 }
 
 type ItemContent struct {
-	Sources   []Source `json:"sources"`
-	ContextMD string   `json:"context_md,omitempty"`
-	Report    Report   `json:"report"`
+	Sources     []Source     `json:"sources"`
+	ContextMD   string       `json:"context_md,omitempty"`
+	Report      Report       `json:"report"`
+	Delegations []Delegation `json:"delegations,omitempty"`
 }
 
 type Item struct {
@@ -75,6 +76,8 @@ type Item struct {
 	Summary                    string         `json:"summary"`
 	Sources                    []Source       `json:"sources"`
 	ContextMD                  string         `json:"context_md,omitempty"`
+	Delegations                []Delegation   `json:"delegations,omitempty"`
+	MatchingDelegationIDs      []string       `json:"matching_delegation_ids,omitempty"`
 	Report                     Report         `json:"report"`
 	ContentVersion             int64          `json:"content_version"`
 	TodoState                  string         `json:"todo_state"`
@@ -89,19 +92,22 @@ type Item struct {
 }
 
 type PutItem struct {
-	RequestID              string         `json:"request_id,omitempty"`
-	DedupeKey              string         `json:"dedupe_key"`
-	ExpectedContentVersion int64          `json:"expected_content_version"`
-	Kind                   string         `json:"kind"`
-	Interests              []ItemInterest `json:"interests"`
-	WatchID                *string        `json:"watch_id,omitempty"`
-	ParentID               *string        `json:"parent_id,omitempty"`
-	Title                  string         `json:"title"`
-	Summary                string         `json:"summary"`
-	Sources                []Source       `json:"sources"`
-	ContextMD              string         `json:"context_md,omitempty"`
-	Report                 Report         `json:"report"`
-	InitialTodoState       string         `json:"initial_todo_state,omitempty"`
+	RequestID              string            `json:"request_id,omitempty"`
+	DedupeKey              string            `json:"dedupe_key"`
+	ExpectedContentVersion int64             `json:"expected_content_version"`
+	Kind                   string            `json:"kind"`
+	Interests              []ItemInterest    `json:"interests"`
+	WatchID                *string           `json:"watch_id,omitempty"`
+	ParentID               *string           `json:"parent_id,omitempty"`
+	Title                  string            `json:"title"`
+	Summary                string            `json:"summary"`
+	Sources                []Source          `json:"sources"`
+	ContextMD              string            `json:"context_md,omitempty"`
+	Report                 Report            `json:"report"`
+	InitialTodoState       string            `json:"initial_todo_state,omitempty"`
+	Delegations            []DelegationPatch `json:"delegations,omitempty"`
+	resolvedDelegations    []Delegation
+	workUpdate             bool
 }
 
 const itemColumns = `id,dedupe_key,kind,origin,watch_id,parent_id,title,summary,content,content_version,todo_state,remind_at,reminder_timezone,acknowledged_content_version,user_note,state_version,created_at,content_updated_at,state_updated_at,
@@ -139,6 +145,7 @@ func scanItem(row scanner) (Item, error) {
 		return item, err
 	}
 	item.Sources, item.ContextMD, item.Report = body.Sources, body.ContextMD, body.Report
+	item.Delegations = body.Delegations
 	item.CreatedAt, item.ContentUpdatedAt, item.StateUpdatedAt = time.UnixMilli(created).UTC(), time.UnixMilli(contentUpdated).UTC(), time.UnixMilli(stateUpdated).UTC()
 	return item, nil
 }
@@ -237,7 +244,7 @@ func validateItem(input PutItem) error {
 }
 
 func contentFor(input PutItem) ItemContent {
-	return ItemContent{Sources: input.Sources, ContextMD: input.ContextMD, Report: input.Report}
+	return ItemContent{Sources: input.Sources, ContextMD: input.ContextMD, Report: input.Report, Delegations: input.resolvedDelegations}
 }
 
 func contentHash(input PutItem) (string, error) {
@@ -261,7 +268,10 @@ func contentHash(input PutItem) (string, error) {
 	if copyInput.Report.Actions == nil {
 		copyInput.Report.Actions = []ReportAction{}
 	}
-	data, err := json.Marshal(copyInput)
+	data, err := json.Marshal(struct {
+		PutItem
+		Delegations []Delegation `json:"delegations,omitempty"`
+	}{PutItem: copyInput, Delegations: input.resolvedDelegations})
 	if err != nil {
 		return "", err
 	}
@@ -382,9 +392,6 @@ func (a *App) putItemTx(ctx context.Context, tx *sql.Tx, id string, input PutIte
 		}
 		id = canonical
 	}
-	if err := validateItem(input); err != nil {
-		return nil, err
-	}
 	for index := range input.Interests {
 		interest, err := getInterest(ctx, tx, input.Interests[index].ID)
 		if err != nil {
@@ -392,18 +399,35 @@ func (a *App) putItemTx(ctx context.Context, tx *sql.Tx, id string, input PutIte
 		}
 		input.Interests[index].ID = interest.ID
 	}
-	hash, err := contentHash(input)
-	if err != nil {
-		return nil, err
-	}
 	var current Item
-	current, err = scanItem(tx.QueryRowContext(ctx, "SELECT "+itemColumns+" FROM items WHERE dedupe_key=?", input.DedupeKey))
+	current, err := scanItem(tx.QueryRowContext(ctx, "SELECT "+itemColumns+" FROM items WHERE dedupe_key=?", input.DedupeKey))
 	exists := err == nil
 	if err != nil {
 		var problem *Error
 		if !errors.As(err, &problem) || problem.Status != 404 {
 			return nil, err
 		}
+	}
+	input.resolvedDelegations, err = mergeDelegations(current.Delegations, input.Delegations)
+	if err != nil {
+		return nil, err
+	}
+	// Source publication retains work content; reconciliation uses the bounded
+	// work-update path rather than replacing research with a source-only report.
+	if exists && origin == "agent" && !input.workUpdate && len(current.Delegations) > 0 {
+		input.Report, input.ContextMD = current.Report, current.ContextMD
+	}
+	// Retained reports may link evidence supplied by earlier research. Validate
+	// against the final evidence set, not just this scan's source references.
+	if exists && origin == "agent" && (current.WatchID != nil || len(current.Delegations) > 0) {
+		mergeEvidence(current, &input)
+	}
+	if err = validateItem(input); err != nil {
+		return nil, err
+	}
+	hash, err := contentHash(input)
+	if err != nil {
+		return nil, err
 	}
 	if !exists {
 		if id != "" || input.ExpectedContentVersion != 0 {
@@ -452,14 +476,7 @@ func (a *App) putItemTx(ctx context.Context, tx *sql.Tx, id string, input PutIte
 	if input.InitialTodoState != "" {
 		return nil, Invalid("initial_todo_state is accepted only when creating an item")
 	}
-	if origin == "agent" && current.WatchID != nil {
-		mergeEvidence(current, &input)
-		hash, err = contentHash(input)
-		if err != nil {
-			return nil, err
-		}
-	}
-	currentHash, err := contentHash(PutItem{DedupeKey: current.DedupeKey, Kind: current.Kind, Interests: current.Interests, WatchID: current.WatchID, ParentID: current.ParentID, Title: current.Title, Summary: current.Summary, Sources: current.Sources, ContextMD: current.ContextMD, Report: current.Report})
+	currentHash, err := contentHash(PutItem{DedupeKey: current.DedupeKey, Kind: current.Kind, Interests: current.Interests, WatchID: current.WatchID, ParentID: current.ParentID, Title: current.Title, Summary: current.Summary, Sources: current.Sources, ContextMD: current.ContextMD, Report: current.Report, resolvedDelegations: current.Delegations})
 	if err != nil {
 		return nil, err
 	}
@@ -493,16 +510,26 @@ func (a *App) putItemTx(ctx context.Context, tx *sql.Tx, id string, input PutIte
 	if err != nil {
 		return nil, err
 	}
-	return current, a.event(ctx, tx, origin, "item", current.ID, "item.content_updated", map[string]any{"content_version": version})
+	actor := origin
+	if input.workUpdate {
+		actor = "agent"
+	}
+	return current, a.event(ctx, tx, actor, "item", current.ID, "item.content_updated", map[string]any{"content_version": version})
 }
 
-type ItemFilters struct{ View, Kind, InterestID, WatchID, Query, DedupeKey string }
+type ItemFilters struct{ View, Kind, InterestID, WatchID, Query, DedupeKey, DelegationStatus, Executor, ExternalRef string }
 
 const attentionPredicate = `(origin<>'agent' OR watch_id IS NOT NULL) AND (todo_state='todo' OR acknowledged_content_version<content_version OR (remind_at IS NOT NULL AND remind_at<=?))`
 
 func (a *App) itemWhere(ctx context.Context, filter ItemFilters) (string, []any, error) {
 	query := " FROM items WHERE 1=1"
 	args := []any{}
+	delegationWhere, delegationArgs, err := delegationFilter(filter)
+	if err != nil {
+		return "", nil, err
+	}
+	query += delegationWhere
+	args = append(args, delegationArgs...)
 	if filter.InterestID != "" {
 		canonical, err := resolveID(ctx, a.Store.DB, "interests", filter.InterestID)
 		if err != nil {
@@ -575,6 +602,7 @@ func (a *App) Items(ctx context.Context, filter ItemFilters) ([]Item, error) {
 		if err != nil {
 			return nil, err
 		}
+		markDelegationMatches(&item, filter)
 		items = append(items, item)
 	}
 	return items, rows.Err()
@@ -619,6 +647,7 @@ func (a *App) ItemsPage(ctx context.Context, filter ItemFilters, afterID string,
 		if scanErr != nil {
 			return nil, false, scanErr
 		}
+		markDelegationMatches(&item, filter)
 		items = append(items, item)
 	}
 	if err = rows.Err(); err != nil {

@@ -153,6 +153,15 @@ func TestItemLookupAndCapturedAttentionThroughMCP(t *testing.T) {
 	if len(items) != 1 || items[0].(map[string]any)["dedupe_key"] != "matter:A & B" {
 		t.Fatalf("exact lookup failed: %#v", exact)
 	}
+	assignedID := items[0].(map[string]any)["id"]
+	updated := call("update_item_work", map[string]any{"item_id": assignedID, "update": map[string]any{"expected_content_version": 1, "delegations": []any{map[string]any{"id": "research", "executor": "agent:A & B", "external_ref": "session:1?&", "instructions_md": "Read assigned Item v1", "status": "pending"}}}})
+	if updated["content_version"] != float64(2) {
+		t.Fatalf("work update failed: %#v", updated)
+	}
+	delegated := call("list_items", map[string]any{"executor": "agent:A & B", "external_ref": "session:1?&", "delegation_status": "pending,blocked", "limit": 1})
+	if len(delegated["items"].([]any)) != 1 || delegated["items"].([]any)[0].(map[string]any)["id"] != assignedID {
+		t.Fatalf("MCP delegation filters lost: %#v", delegated)
+	}
 	page := call("list_items", map[string]any{"view": "todo", "query": "Existing matter", "limit": 1})
 	next := call("list_items", map[string]any{"view": "todo", "query": "Existing matter", "limit": 1, "cursor": page["next_cursor"]})
 	if page["items"].([]any)[0].(map[string]any)["id"] == next["items"].([]any)[0].(map[string]any)["id"] {
