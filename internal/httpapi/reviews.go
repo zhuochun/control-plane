@@ -35,7 +35,7 @@ func newPlantUMLRenderer() *plantUMLRenderer {
 	renderer := &plantUMLRenderer{jar: jar, java: java, slots: make(chan struct{}, 2)}
 	// File presence does not establish Java/JAR compatibility. Exercise the same
 	// sandboxed path used for previews before advertising availability.
-	if _, err := renderer.render(context.Background(), "@startuml\nAlice -> Bob: Ready\n@enduml"); err != nil {
+	if _, err := renderer.renderWithTimeout(context.Background(), "@startuml\nAlice -> Bob: Ready\n@enduml", 30*time.Second); err != nil {
 		return nil
 	}
 	return renderer
@@ -65,6 +65,10 @@ func (b *boundedOutput) Write(data []byte) (int, error) {
 }
 
 func (p *plantUMLRenderer) render(ctx context.Context, source string) ([]byte, error) {
+	return p.renderWithTimeout(ctx, source, 10*time.Second)
+}
+
+func (p *plantUMLRenderer) renderWithTimeout(ctx context.Context, source string, timeout time.Duration) ([]byte, error) {
 	if p == nil {
 		return nil, &app.Error{Status: 503, Code: "renderer_unavailable", Message: "Local PlantUML rendering is unavailable or failed its startup check. " + plantUMLSetup(runtime.GOOS)}
 	}
@@ -85,7 +89,7 @@ func (p *plantUMLRenderer) render(ctx context.Context, source string) ([]byte, e
 	default:
 		return nil, &app.Error{Status: 503, Code: "renderer_busy", Message: "Diagram renderer is busy; retry shortly"}
 	}
-	ctx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	command := exec.CommandContext(ctx, p.java, "-DPLANTUML_SECURITY_PROFILE=SANDBOX", "-Xmx128m", "-jar", p.jar, "-pipe", "-tpng", "-failfast2")
 	command.Stdin = strings.NewReader(source)
