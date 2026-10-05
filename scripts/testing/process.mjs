@@ -30,7 +30,21 @@ export async function terminateTree(child) {
       process.kill(-child.pid, "SIGKILL");
     } catch (error) {
       if (error.code !== "ESRCH") throw error;
+      return;
     }
+    // kill(2) only queues SIGKILL. Wait for the group to disappear so callers
+    // can rely on descendants being gone when timeout cleanup completes.
+    const deadline = Date.now() + 1000;
+    while (Date.now() < deadline) {
+      try {
+        process.kill(-child.pid, 0);
+      } catch (error) {
+        if (error.code === "ESRCH") return;
+        throw error;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+    throw new Error(`Process-tree cleanup timeout: ${child.pid}`);
   }
 }
 
