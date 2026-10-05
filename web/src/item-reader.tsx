@@ -5,8 +5,7 @@ import ArrowBackOutlined from "@mui/icons-material/ArrowBackOutlined";
 import DescriptionOutlined from "@mui/icons-material/DescriptionOutlined";
 import OpenInNewOutlined from "@mui/icons-material/OpenInNewOutlined";
 import { NavLink } from "react-router";
-import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { AnswerNotes, ReportContent } from "./report-content";
 import { api } from "./api";
 import { type Item, parseMetric, ReminderDialog, useItemAction } from "./items";
 import { MetricChart } from "./metric-chart";
@@ -208,18 +207,9 @@ export function ItemReader({
               </>
             )}
             <article className="reader-markdown">
-              {item.report.schema_version === 1 ? (
-                <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
-                  {item.report.body_md}
-                </ReactMarkdown>
-              ) : (
-                <Alert severity="warning">
-                  Report format unavailable. The summary and sources are still
-                  shown.
-                </Alert>
-              )}
+              <ReportContent item={item} />
             </article>
-            {!!item.report.actions?.length && (
+            {item.report.schema_version === 1 && !!item.report.actions?.length && (
               <div
                 className="reader-report-actions"
                 aria-label="Report actions"
@@ -271,6 +261,7 @@ export function ItemReader({
                 })}
               </div>
             )}
+            <AnswerNotes item={item} />
             <section className="reader-sources">
               <h3>Sources</h3>
               {sources.length ? (

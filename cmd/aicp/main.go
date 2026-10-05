@@ -234,6 +234,7 @@ GETTING_STARTED.md for the full agent-assisted path.`, SilenceUsage: true, Silen
 	root.AddCommand(config)
 	root.AddCommand(configurationCommand("interest", "/interests", printResult), configurationCommand("watch", "/watches", printResult))
 	root.AddCommand(itemCommand(printResult))
+	root.AddCommand(reviewCommand(printResult))
 	root.AddCommand(runCommand(printResult))
 	root.AddCommand(changesCommand(printResult))
 	root.AddCommand(proposalCommand(printResult))

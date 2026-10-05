@@ -61,6 +61,14 @@ func TestAttentionSnapshotMigrationFromVersion5(t *testing.T) {
 	if _, err = db.ExecContext(ctx, `INSERT INTO command_receipts(request_id,request_hash,response) VALUES('start-r-1','hash',?)`, string(receiptJSON)); err != nil {
 		t.Fatal(err)
 	}
+	const preservedContent = `{"sources":[],"report":{"schema_version":1,"body_md":"Original report"}}`
+	if _, err = db.ExecContext(ctx, `INSERT INTO items(id,dedupe_key,kind,title,summary,content,content_version,content_hash,todo_state,remind_at,reminder_timezone,acknowledged_content_version,user_note,state_version,created_at,content_updated_at,state_updated_at,origin)
+VALUES('preserved-item','preserved','report','Preserved','Original',?,1,'hash','todo',2000,'UTC',1,'Human decision',4,1000,1000,1000,'user')`, preservedContent); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, `INSERT INTO item_versions(item_id,content_version,snapshot) VALUES('preserved-item',1,?)`, preservedContent); err != nil {
+		t.Fatal(err)
+	}
 	if err = db.Close(); err != nil {
 		t.Fatal(err)
 	}
@@ -74,8 +82,19 @@ func TestAttentionSnapshotMigrationFromVersion5(t *testing.T) {
 		}
 	})
 	var version int64
-	if err = opened.DB.QueryRowContext(ctx, `SELECT max(version_id) FROM goose_db_version WHERE is_applied=1`).Scan(&version); err != nil || version != 9 {
+	if err = opened.DB.QueryRowContext(ctx, `SELECT max(version_id) FROM goose_db_version WHERE is_applied=1`).Scan(&version); err != nil || version != 10 {
 		t.Fatalf("schema version %d: %v", version, err)
+	}
+	var content, todo, note, preservedSnapshot string
+	var contentVersion, stateVersion, acknowledged, remindAt int64
+	if err = opened.DB.QueryRowContext(ctx, "SELECT content,todo_state,user_note,content_version,state_version,acknowledged_content_version,remind_at FROM items WHERE id='preserved-item'").Scan(&content, &todo, &note, &contentVersion, &stateVersion, &acknowledged, &remindAt); err != nil {
+		t.Fatal(err)
+	}
+	if content != preservedContent || todo != "todo" || note != "Human decision" || contentVersion != 1 || stateVersion != 4 || acknowledged != 1 || remindAt != 2000 {
+		t.Fatal("review migration changed existing Item/user state")
+	}
+	if err = opened.DB.QueryRowContext(ctx, "SELECT snapshot FROM item_versions WHERE item_id='preserved-item'").Scan(&preservedSnapshot); err != nil || preservedSnapshot != preservedContent {
+		t.Fatalf("migration changed history: %v", err)
 	}
 	var savedContext, savedWatches, status string
 	if err = opened.DB.QueryRowContext(ctx, `SELECT context_snapshot,selected_watches,status FROM runs WHERE id='r-1'`).Scan(&savedContext, &savedWatches, &status); err != nil {

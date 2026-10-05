@@ -15,6 +15,7 @@ func New(a *app.App, assets http.Handler, version string) http.Handler {
 	mux := http.NewServeMux()
 	configurationRoutes(mux, a)
 	itemRoutes(mux, a)
+	reviewRoutes(mux, a)
 	runRoutes(mux, a)
 	proposalRoutes(mux, a)
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, r *http.Request) { write(w, 200, map[string]string{"status": "ok"}) })
@@ -71,7 +72,7 @@ func New(a *app.App, assets http.Handler, version string) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("X-Content-Type-Options", "nosniff")
 		w.Header().Set("X-Frame-Options", "DENY")
-		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
+		w.Header().Set("Content-Security-Policy", "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data: blob:; connect-src 'self'; frame-ancestors 'none'; base-uri 'none'; form-action 'self'")
 		host := r.Host
 		if colon := strings.LastIndex(host, ":"); colon >= 0 {
 			host = host[:colon]

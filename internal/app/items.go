@@ -55,6 +55,7 @@ type Report struct {
 	SchemaVersion int            `json:"schema_version"`
 	BodyMD        string         `json:"body_md"`
 	Actions       []ReportAction `json:"actions,omitempty"`
+	Blocks        []ReportBlock  `json:"blocks,omitempty"`
 }
 
 type ItemContent struct {
@@ -89,6 +90,9 @@ type Item struct {
 	CreatedAt                  time.Time      `json:"created_at"`
 	ContentUpdatedAt           time.Time      `json:"content_updated_at"`
 	StateUpdatedAt             time.Time      `json:"state_updated_at"`
+	ReviewMaterialHash         string         `json:"review_material_hash,omitempty"`
+	Answers                    []ReviewAnswer `json:"answers,omitempty"`
+	AnswerHistoryAvailable     bool           `json:"answer_history_available,omitempty"`
 }
 
 type PutItem struct {
@@ -157,7 +161,13 @@ func getItem(ctx context.Context, db querier, id string) (Item, error) {
 	}
 	return scanItem(db.QueryRowContext(ctx, "SELECT "+itemColumns+" FROM items WHERE id=?", canonical))
 }
-func (a *App) Item(ctx context.Context, id string) (Item, error) { return getItem(ctx, a.Store.DB, id) }
+func (a *App) Item(ctx context.Context, id string) (Item, error) {
+	item, err := getItem(ctx, a.Store.DB, id)
+	if err != nil {
+		return item, err
+	}
+	return completeItem(ctx, a.Store.DB, item)
+}
 
 func validateItem(input PutItem) error {
 	if strings.TrimSpace(input.DedupeKey) == "" || strings.TrimSpace(input.Title) == "" || strings.TrimSpace(input.Summary) == "" {
@@ -169,8 +179,8 @@ func validateItem(input PutItem) error {
 	if input.Kind != "note" && input.Kind != "report" && input.Kind != "task" && input.Kind != "outcome" {
 		return Invalid("kind must be note, report, task, or outcome")
 	}
-	if input.Report.SchemaVersion != 1 {
-		return Invalid("report.schema_version must be 1")
+	if err := validateReport(input.Report); err != nil {
+		return err
 	}
 	content, err := json.Marshal(contentFor(input))
 	if err != nil {
@@ -423,6 +433,9 @@ func (a *App) putItemTx(ctx context.Context, tx *sql.Tx, id string, input PutIte
 		mergeEvidence(current, &input)
 	}
 	if err = validateItem(input); err != nil {
+		return nil, err
+	}
+	if err = validateReviewReferences(ctx, tx, input.Report); err != nil {
 		return nil, err
 	}
 	hash, err := contentHash(input)

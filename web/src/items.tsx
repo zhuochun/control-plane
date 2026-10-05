@@ -12,8 +12,9 @@ import {
 } from "@mui/material";
 import { NavLink, useParams } from "react-router";
 import ReactMarkdown from "react-markdown";
-import remarkGfm from "remark-gfm";
+import { AnswerNotes, ReportContent } from "./report-content";
 import { api, APIError, collection } from "./api";
+import type { ReportBlock, ReviewAnswer } from "./report-types";
 import {
   dateInputValue,
   effectiveTimezone,
@@ -51,7 +52,10 @@ export type Item = {
   summary: string;
   sources: Source[];
   context_md?: string;
-  report: { schema_version: number; body_md: string; actions?: ReportAction[] };
+  report: { schema_version: number; body_md: string; actions?: ReportAction[]; blocks?: ReportBlock[] };
+  review_material_hash?: string;
+  answers?: ReviewAnswer[];
+  answer_history_available?: boolean;
   content_version: number;
   todo_state: "none" | "todo" | "done";
   remind_at?: string;
@@ -578,16 +582,8 @@ export function ItemDetail() {
       )}
       <div className="detail-layout">
         <article className="panel report-body">
-          {item.report.schema_version === 1 ? (
-            <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml>
-              {item.report.body_md}
-            </ReactMarkdown>
-          ) : (
-            <Alert severity="warning">
-              This report format is not supported yet. The summary and sources
-              remain available.
-            </Alert>
-          )}
+          <ReportContent item={item} />
+          <AnswerNotes item={item} />
         </article>
         <aside className="detail-side">
           <section className="panel">
@@ -687,7 +683,7 @@ export function ItemDetail() {
           </section>
         </aside>
       </div>
-      {(item.report.actions?.length ?? 0) > 0 && (
+      {item.report.schema_version === 1 && (item.report.actions?.length ?? 0) > 0 && (
         <section className="generated-actions">
           <span>Suggested</span>
           {item.report.actions?.map((action) =>

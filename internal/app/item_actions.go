@@ -91,7 +91,7 @@ func (a *App) ApplyItemAction(ctx context.Context, id string, input ApplyItemAct
 			return nil, Invalid("unknown item action")
 		}
 		if !changed {
-			return item, nil
+			return completeItem(ctx, tx, item)
 		}
 		now := a.Now().UTC().UnixMilli()
 		_, err = tx.ExecContext(ctx, `UPDATE items SET todo_state=?,remind_at=?,reminder_timezone=?,acknowledged_content_version=?,state_version=state_version+1,state_updated_at=? WHERE id=?`, item.TodoState, remindAt, timezone, item.AcknowledgedContentVersion, now, id)
@@ -102,7 +102,10 @@ func (a *App) ApplyItemAction(ctx context.Context, id string, input ApplyItemAct
 		if err != nil {
 			return nil, err
 		}
-		return item, a.event(ctx, tx, "user", "item", id, "item.state_updated", map[string]any{"action": input.Action, "state_version": item.StateVersion})
+		if err = a.event(ctx, tx, "user", "item", id, "item.state_updated", map[string]any{"action": input.Action, "state_version": item.StateVersion}); err != nil {
+			return nil, err
+		}
+		return completeItem(ctx, tx, item)
 	})
 }
 
@@ -181,7 +184,10 @@ func (a *App) SetUserNote(ctx context.Context, id string, input SetUserNote) (js
 		if err != nil {
 			return nil, err
 		}
-		return item, a.event(ctx, tx, "user", "item", id, "item.note_updated", map[string]any{"state_version": item.StateVersion})
+		if err = a.event(ctx, tx, "user", "item", id, "item.note_updated", map[string]any{"state_version": item.StateVersion}); err != nil {
+			return nil, err
+		}
+		return completeItem(ctx, tx, item)
 	})
 }
 

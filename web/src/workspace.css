@@ -433,11 +433,17 @@ main:has(> .item-workspace) > footer {
   margin-top: 14px;
 }
 .reader-markdown {
-  max-width: 78ch;
+  width: 100%;
   color: var(--ink);
   font-size: 17px;
   line-height: 1.65;
   overflow-wrap: anywhere;
+}
+.report-prose > p,
+.report-prose > ul,
+.report-prose > ol,
+.report-prose > blockquote {
+  max-width: 78ch;
 }
 .reader-markdown p,
 .reader-markdown li {
@@ -766,5 +772,122 @@ main:has(> .item-workspace) > footer {
   }
   main > :not(.item-workspace):not(footer) {
     margin: 20px;
+  }
+}
+
+.review-form {
+  margin-block: 24px;
+  padding: 20px;
+  border: 1px solid var(--line, #cbd5e1);
+  border-radius: 12px;
+}
+.review-form > h3 {
+  margin: 0 0 12px;
+}
+.review-field {
+  min-width: 0;
+  margin-block: 16px;
+  padding: 12px;
+}
+fieldset.review-field {
+  border: 1px solid var(--line, #cbd5e1);
+  border-radius: 6px;
+}
+.review-field legend {
+  padding-inline: 6px;
+}
+.review-option {
+  margin-block: 12px;
+}
+.review-option label {
+  display: flex;
+  gap: 10px;
+  align-items: center;
+  min-height: 44px;
+  cursor: pointer;
+}
+.review-option input {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  accent-color: var(--green);
+}
+.review-option label:has(input:disabled) {
+  cursor: default;
+  color: var(--muted);
+}
+.review-field-status {
+  display: block;
+  margin-top: 8px;
+  color: var(--muted);
+}
+.review-field-error {
+  color: #a12c23;
+  margin: 8px 0 0;
+}
+.reader-markdown .review-field-error {
+  color: #a12c23;
+  font-size: 14px;
+}
+.review-evidence {
+  margin: 12px 0;
+}
+.review-evidence img {
+  display: block;
+  max-width: 100%;
+  max-height: 500px;
+  object-fit: contain;
+}
+.review-expanded-image {
+  display: block;
+  max-width: 100%;
+  height: auto;
+}
+.review-diagram {
+  margin-block: 16px;
+  min-width: 0;
+}
+.review-diagram pre,
+.review-notes pre {
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+}
+.review-notes {
+  margin-block: 24px;
+}
+.review-answer {
+  padding: 12px;
+  border-left: 3px solid #6b7280;
+  margin-block: 12px;
+}
+.review-answer-heading {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: space-between;
+  gap: 4px 16px;
+  margin-bottom: 8px;
+}
+.review-answer-heading > * {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.review-answer-heading time,
+.review-answer small {
+  color: var(--muted);
+  font-size: 13px;
+}
+.review-answer-value {
+  max-width: 78ch;
+  margin-block: 10px;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 600px) {
+  .review-form {
+    padding: 14px;
+  }
+  .review-field {
+    padding: 10px;
   }
 }

@@ -44,6 +44,48 @@ Item-local delegations and existing-Item work updates are owned by
 describes external-agent continuation and bounded recovery. aicp stores handoffs;
 the primary agent launches and communicates with executors outside this runtime.
 
+Structured report blocks, immutable review formats, image evidence, and saved
+human answers are owned by `internal/app/review_*.go`. The
+[review format contract](specs/20261004-item-review-formats-and-user-answers-spec.md)
+defines interleaving and answer applicability. HTTP provides local PlantUML
+rendering and portal-only submission; CLI/MCP expose discovery, registration,
+uploads, and reads. The portal's `report-content.tsx` renders reviews and diagrams.
+PlantUML needs a compatible Java runtime (the tested JAR requires Java 11 or
+newer) on PATH and an absolute `AICP_PLANTUML_JAR` path. When unavailable, source
+remains readable. No external rendering service is contacted.
+
+At startup the server renders a small diagram through the same bounded sandbox
+used for previews. `plantuml_available` is true only if that check succeeds;
+`plantuml_setup` provides platform-specific instructions through HTTP, CLI, and
+MCP capability discovery. After changing the installation or environment, restart
+the server. The startup check has a ten-second timeout. Agents can use these
+instructions to request dependency setup.
+
+On macOS, [Homebrew](https://formulae.brew.sh/formula/plantuml) installs PlantUML,
+OpenJDK, and Graphviz:
+
+```sh
+brew install plantuml
+export PATH="$(brew --prefix openjdk)/bin:$PATH"
+export AICP_PLANTUML_JAR="$(brew --prefix plantuml)/libexec/plantuml.jar"
+```
+
+On Windows, install Java 11 or newer (for example,
+[Eclipse Temurin](https://adoptium.net/temurin/releases/)), download the
+[official PlantUML JAR](https://plantuml.com/download), and configure the server's
+PowerShell session with the actual installation paths:
+
+```powershell
+$env:PATH = 'C:\path\to\java\bin;' + $env:PATH
+$env:AICP_PLANTUML_JAR = 'C:\path\to\plantuml.jar'
+```
+
+These are operator setup commands. The portal displays guidance; it does not run
+package managers. The renderer uses Java and the JAR directly, including on
+Homebrew installations, so a `plantuml` command alone is insufficient.
+See [PlantUML installation prerequisites](https://plantuml.com/starting) for
+Graphviz requirements on other platforms.
+
 ## Find the owner of a change
 
 | Change or question | Start here | Follow through |

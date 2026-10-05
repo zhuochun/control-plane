@@ -89,7 +89,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if version > 9 {
+	if version > 10 {
 		return fmt.Errorf("database schema %d is newer than this aicp supports; upgrade aicp", version)
 	}
 	if _, err := provider.Up(ctx); err != nil {

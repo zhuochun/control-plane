@@ -347,6 +347,12 @@ func TestVersionSixStartReceiptReplaysNewCapturedContract(t *testing.T) {
 	if _, err = s.DB.ExecContext(ctx, "DELETE FROM goose_db_version WHERE version_id>=7"); err != nil {
 		t.Fatal(err)
 	}
+	// Model the old schema as well as its version marker.
+	for _, table := range []string{"item_answers", "review_artifacts", "review_formats"} {
+		if _, err = s.DB.ExecContext(ctx, "DROP TABLE "+table); err != nil {
+			t.Fatal(err)
+		}
+	}
 	if err = s.Close(); err != nil {
 		t.Fatal(err)
 	}

@@ -132,6 +132,7 @@ func respond(value map[string]any, err error) (*mcp.CallToolResult, map[string]a
 func New(serverURL, version string) *mcp.Server {
 	server := mcp.NewServer(&mcp.Implementation{Name: "aicp", Version: version}, nil)
 	caller := Caller{Client: client.New(serverURL)}
+	addReviewTools(server, caller)
 	for _, entity := range []struct{ name, path string }{{"interest", "/interests"}, {"watcher", "/watches"}} {
 		entity := entity
 		mcp.AddTool(server, &mcp.Tool{Name: "list_" + entity.name + "s", Description: "Read current " + entity.name + " configuration without starting a source Run."}, func(ctx context.Context, _ *mcp.CallToolRequest, input configList) (*mcp.CallToolResult, map[string]any, error) {
@@ -186,7 +187,7 @@ func New(serverURL, version string) *mcp.Server {
 		value, err := caller.call(ctx, http.MethodPost, "/runs", body)
 		return respond(value, err)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "submit_watch_findings", Description: "Submit one final success, partial, failed, or empty result for one selected Watch. Atomically save its Items, coverage, limitations, and successful checkpoint. Call exactly once per selected Watch."}, func(ctx context.Context, _ *mcp.CallToolRequest, input findingsInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "submit_watch_findings", InputSchema: reportInputSchema[findingsInput](), Description: "Submit one final success, partial, failed, or empty result for one selected Watch. Atomically save its Items, coverage, limitations, and successful checkpoint. Call exactly once per selected Watch."}, func(ctx context.Context, _ *mcp.CallToolRequest, input findingsInput) (*mcp.CallToolResult, map[string]any, error) {
 		body := app.SubmitWatchFindings{RequestID: input.RequestID, ExpectedWatchRevision: input.ExpectedWatchRevision, Status: input.Status, Error: input.Error, Coverage: input.Coverage, Items: input.Items}
 		path := "/runs/watches/" + input.WatchID + "/findings"
 		if input.RunID != "" {
@@ -195,7 +196,7 @@ func New(serverURL, version string) *mcp.Server {
 		value, err := caller.call(ctx, http.MethodPut, path, body)
 		return respond(value, err)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "upsert_item", Description: "Create or update an Interest-level Item that is not specific to a selected Watch. Use a stable dedupe key and expected content version; this never advances Watch coverage."}, func(ctx context.Context, _ *mcp.CallToolRequest, input app.PutItem) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "upsert_item", InputSchema: reportInputSchema[app.PutItem](), Description: "Create or update an Interest-level Item that is not specific to a selected Watch. Use a stable dedupe key and expected content version; this never advances Watch coverage."}, func(ctx context.Context, _ *mcp.CallToolRequest, input app.PutItem) (*mcp.CallToolResult, map[string]any, error) {
 		value, err := caller.call(ctx, http.MethodPost, "/items/interest", input)
 		return respond(value, err)
 	})
@@ -211,7 +212,7 @@ func New(serverURL, version string) *mcp.Server {
 		value, err := caller.call(ctx, http.MethodGet, "/items/"+input.ItemID, nil)
 		return respond(value, err)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "update_item_work", Description: "Update an assigned Item without a Run: replace report/context, add evidence, and merge delegations by ID. Read get_item first; preserve prior conclusions, report actions, and continuation context. Omitted fields retain content; empty lists remove nothing. Executor patches should omit external_ref and leave delivery pending for primary review. Identify the input version and requirements actually used. On content_conflict, reread, merge, and retry with current expected_content_version and a new request_id; reuse IDs only for identical uncertain retries. Does not change provenance, relevance or user state."}, func(ctx context.Context, _ *mcp.CallToolRequest, input workInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "update_item_work", InputSchema: reportInputSchema[workInput](), Description: "Update an assigned Item without a Run: replace report/context, add evidence, and merge delegations by ID. Read get_item first; preserve prior conclusions, report actions, and continuation context. Omitted fields retain content; empty lists remove nothing. Executor patches should omit external_ref and leave delivery pending for primary review. Identify the input version and requirements actually used. On content_conflict, reread, merge, and retry with current expected_content_version and a new request_id; reuse IDs only for identical uncertain retries. Does not change provenance, relevance or user state."}, func(ctx context.Context, _ *mcp.CallToolRequest, input workInput) (*mcp.CallToolResult, map[string]any, error) {
 		value, err := caller.call(ctx, http.MethodPatch, "/items/"+url.PathEscape(input.ItemID)+"/work", input.Update)
 		return respond(value, err)
 	})
