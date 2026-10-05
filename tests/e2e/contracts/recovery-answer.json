@@ -1,0 +1,6 @@
+{
+  "A1": { "response_lost": true, "draft": "Keep this draft" },
+  "A2": { "same_request": true, "answer_count": 1, "answer_event_count": 1 },
+  "A3": { "stale_write_rejected": true, "draft": "Preserve the correction", "history_count": 1 },
+  "A4": { "current_text": "Preserve the correction", "history_count": 2 }
+}

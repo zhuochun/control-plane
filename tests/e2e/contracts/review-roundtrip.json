@@ -1,0 +1,11 @@
+{
+  "R1": { "id": "journey-review", "version": 1 },
+  "R2": { "content_version": 1, "answer_count": 0 },
+  "R3": {
+    "approach": { "disposition": "answered", "selected_ids": ["local"], "question": "Delivery approach", "answer": "Local" },
+    "instructions": { "disposition": "answered", "text": "Keep the rollout small.", "question": "Additional instructions", "answer": "Keep the rollout small." }
+  },
+  "R4": { "fresh_pid": true },
+  "R5": { "same_item": true, "answer_count": 1, "answer_event_count": 1, "applicable": true, "todo_state": "none", "acknowledged_content_version": 0, "same_snapshot": true },
+  "R6": { "selected_ids": ["remote"], "answer_label": "Remote", "current_answer_count": 1, "history_count": 2, "answer_event_count": 2, "supersedes_original": true, "original_snapshot_unchanged": true }
+}

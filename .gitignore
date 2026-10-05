@@ -33,6 +33,7 @@ go.work.sum
 /web/node_modules/
 /web/playwright-report/
 /web/test-results/
+/test-output/
 *.db
 *.db-shm
 *.db-wal

@@ -1,0 +1,6 @@
+{
+  "I1": { "item_count": 2, "content_version": 1, "checkpoint": { "cycle": 1 } },
+  "I2": { "todo_state": "todo", "user_note": "Check again next week.", "reminder_timezone": "Asia/Singapore", "reminder_date": "2099-09-16", "state_version": 4 },
+  "I3": { "same_item": true, "content_version": 2, "state_version": 4, "todo_state": "todo", "user_note": "Check again next week.", "same_reminder": true, "checkpoint": { "cycle": 2 } },
+  "I4": { "same_item": true, "content_version": 2, "state_version": 4, "checkpoint": { "cycle": 2 } }
+}

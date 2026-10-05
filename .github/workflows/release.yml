@@ -22,18 +22,22 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: npm --prefix web ci
-      - run: npm --prefix web run build
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
       - uses: golangci/golangci-lint-action@v9
         with:
           version-file: .golangci-lint-version
           install-only: true
-      - run: pwsh -File scripts/check-go.ps1
-      - run: go vet ./...
-      - run: go test -race ./...
-      - run: go build -trimpath -o dist/aicp ./cmd/aicp
-      - run: npx --prefix web playwright install --with-deps chromium
-      - run: npm --prefix web run test:e2e
+      - run: pwsh -File scripts/testing/provision-renderer.ps1
+      - run: pwsh -File scripts/test.ps1 -Suite release -Profile renderer
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verification-linux
+          path: test-output/run-*/
+          retention-days: 14
 
   verify-windows:
     runs-on: windows-latest
@@ -52,9 +56,20 @@ jobs:
         with:
           version-file: .golangci-lint-version
           install-only: true
-      - run: npx --prefix web playwright install chromium
+      - uses: actions/setup-java@v5
+        with:
+          distribution: temurin
+          java-version: 21
       - shell: pwsh
-        run: .\scripts\verify.ps1
+        run: .\scripts\testing\provision-renderer.ps1
+      - shell: pwsh
+        run: .\scripts\test.ps1 -Suite release -Profile renderer
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verification-windows
+          path: test-output/run-*/
+          retention-days: 14
       - run: go install github.com/goreleaser/goreleaser/v2@v2.18.1
       - shell: pwsh
         run: |

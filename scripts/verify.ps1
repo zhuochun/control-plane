@@ -3,20 +3,7 @@ Set-StrictMode -Version Latest
 
 $root = (Resolve-Path -LiteralPath (Join-Path $PSScriptRoot '..')).Path
 Set-Location -LiteralPath $root
-npm --prefix web ci
-if ($LASTEXITCODE -ne 0) { throw 'npm ci failed' }
-npm --prefix web run typecheck
-if ($LASTEXITCODE -ne 0) { throw 'web typecheck failed' }
-npm --prefix web run build
-if ($LASTEXITCODE -ne 0) { throw 'web build failed' }
-& (Join-Path $root 'scripts\check-go.ps1')
-if ($LASTEXITCODE -ne 0) { throw 'Go format and lint checks failed' }
-go vet ./...
-if ($LASTEXITCODE -ne 0) { throw 'go vet failed' }
-go test ./...
-if ($LASTEXITCODE -ne 0) { throw 'go test failed' }
-go build -trimpath -o dist/aicp.exe ./cmd/aicp
-if ($LASTEXITCODE -ne 0) { throw 'go build failed' }
-npm --prefix web run test:e2e
-if ($LASTEXITCODE -ne 0) { throw 'browser tests failed' }
-& (Join-Path $root 'scripts\demo.ps1')
+# Complete core gate; the shared runner verifies locked dependency/build identity
+# and includes the two-cycle demo journey. Release additionally requires renderer
+# and host packaging evidence in the existing release jobs.
+& (Join-Path $root 'scripts/test.ps1') -Suite main

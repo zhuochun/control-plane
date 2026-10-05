@@ -1,0 +1,6 @@
+{
+  "U1": { "status": "running", "watch_count": 1 },
+  "U2": { "same_run": true, "status": "running", "fresh_pid": true, "checkpoint": null },
+  "U3": { "status": "failed", "reason": "Abandoned by owner: agent exited before inspection", "checkpoint": null },
+  "U4": { "new_run": true, "status": "running" }
+}

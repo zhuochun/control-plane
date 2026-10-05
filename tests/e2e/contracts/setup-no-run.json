@@ -1,0 +1,5 @@
+{
+  "S1": { "timezone": "Asia/Singapore", "owner_context": "Keep inspections bounded." },
+  "S2": { "interest_title": "Delivery economics", "source": "fixtures/demo-costs", "run_count": 0, "due_watch_count": 1 },
+  "S3": { "portal_interest_visible": true, "portal_source_visible": true, "run_count": 0 }
+}

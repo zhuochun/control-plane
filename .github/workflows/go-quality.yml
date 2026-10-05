@@ -22,12 +22,14 @@ jobs:
         with:
           go-version-file: go.mod
           cache: true
-      - run: npm --prefix web ci
-      - run: npm --prefix web run build
       - uses: golangci/golangci-lint-action@v9
         with:
           version-file: .golangci-lint-version
           install-only: true
-      - run: pwsh -File scripts/check-go.ps1
-      - run: go vet ./...
-      - run: go test -race ./...
+      - run: pwsh -File scripts/test.ps1 -Suite main
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: verification-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-output/run-*/
+          retention-days: 14

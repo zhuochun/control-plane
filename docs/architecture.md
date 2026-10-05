@@ -126,12 +126,24 @@ tests; they do not replace public-interface verification for a behavior change.
 | Portal | `npm --prefix web run build` | Build the executable, then `npm --prefix web run test:e2e` |
 | Cross-adapter run or Item state | Relevant Go package tests | `scripts/demo.ps1` and `scripts/verify.ps1` |
 
-For browser tests, build `dist/aicp.exe` first and install Chromium once with
-`npx --prefix web playwright install chromium`. Playwright starts an isolated
-test server and data directory; it does not reuse a server already bound to
-`127.0.0.1:7331`. `scripts/demo.ps1` also starts its own isolated server and
-exercises two run cycles through the public CLI. Stop another local aicp server
-before either check if it owns that port.
+For normal iteration use [the verification runner](../scripts/testing/README.md):
+
+```powershell
+./scripts/test.ps1 -Level unit -Feature reviews
+./scripts/test.ps1 -Level component -Feature reviews
+./scripts/test.ps1 -Level system -Concern accessibility -Feature reviews
+./scripts/test.ps1 -Level system -Scenario review-roundtrip
+./scripts/test.ps1 -Level system -Concern contract
+./scripts/test.ps1 -Suite change -Feature reviews -Plan
+```
+
+The runner prepares locked dependencies, frontend assets, the executable and
+Chromium as needed, validating input and output digests before reuse. System
+results always execute again. Fixtures own their server and database; port 7331
+must be free. Each E2E journey starts with a fresh database. Focused UI cases share
+one worker server. `scripts/demo.ps1` remains a standalone CLI demonstration,
+including its optional executable parameter; the automated inspection journey
+retains its two-cycle assertions and adds portal-owned notes and request replay.
 
 `scripts/check-go.ps1` is the focused Go quality gate. It checks the pinned
 golangci-lint version, gofmt/goimports output, and the configured standard,
@@ -139,12 +151,13 @@ Staticcheck, Go vet, `errcheck`, and targeted readability rules. Install the ver
 `.golangci-lint-version` using the
 [official local installation instructions](https://golangci-lint.run/docs/welcome/install/local/)
 before running it. `scripts/verify.ps1` is the complete
-Windows local gate: locked web install, typecheck, portal build, Go formatting
-and lint, vet and tests, executable build, browser tests, and the fixture demo.
-`.github/workflows/go-quality.yml` enforces the Go quality checks on pushes to
-`main` and pull requests. `.github/workflows/release.yml` verifies Windows and
-Linux for release tags or a manual release run. Linux CI additionally runs Go
-tests with `-race`. The demo and browser tests use
+Windows local gate through `test.ps1 -Suite main`: preparation, typecheck, Go
+formatting/lint/vet, indexed Go/harness tests, focused browser checks, and all core
+journeys. `.github/workflows/go-quality.yml` runs that complete suite on pushes
+to `main` and pull requests. `.github/workflows/release.yml` adds required pinned
+PlantUML rendering, Windows package smoke checks, and Linux verification for
+release tags or a manual release run. Linux CI additionally runs Go tests with
+`-race`. The demo and browser tests use
 local fixtures and an isolated database, so they do not establish live access
 to external sources.
 
@@ -167,3 +180,12 @@ When reporting verification, name the exact command, result, and skipped
 surfaces. A package test does not establish portal behavior; a portal build does
 not establish API behavior; the offline demo does not establish live source
 inspection.
+
+The implemented [testing levels, execution suites, and journey-record contract](specs/20261005-layered-verification-and-journey-goldens-spec.md)
+defines unit, component/integration, and system testing levels; independent
+concerns and execution suites; fast feature selection; and human-reviewable
+expected/observed records. [Warm measurements](perf/20261005-verification-baseline.md)
+record local iteration costs. `test-output/latest.json` locates the newest attempt;
+its summary links numbered journey reports. `scripts/propose-goldens.ps1` copies
+concrete evidence into ignored output for owner review without changing accepted
+expectations. Visual golden adoption remains a human decision.
