@@ -116,6 +116,47 @@ func TestSettingsHTTPBoundary(t *testing.T) {
 	}
 }
 
+func TestLocalHostnameAndOriginBoundary(t *testing.T) {
+	s, err := store.Open(context.Background(), t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Errorf("close store: %v", err)
+		}
+	})
+	handler := New(app.New(s), http.NotFoundHandler(), "test")
+	tests := []struct {
+		name, host, origin string
+		want               int
+	}{
+		{"IPv4", "127.0.0.1:7331", "http://127.0.0.1:7331", 200},
+		{"localhost", "localhost:7331", "http://localhost:7331", 200},
+		{"IPv6", "[::1]:7331", "http://[::1]:7331", 200},
+		{"named direct", "aicp.localhost:7331", "http://aicp.localhost:7331", 200},
+		{"named proxy", "aicp.localhost", "http://aicp.localhost", 200},
+		{"foreign host", "attacker.example", "http://attacker.example", 403},
+		{"other localhost name", "other.localhost", "http://other.localhost", 403},
+		{"hostname suffix", "aicp.localhost.attacker.example", "http://aicp.localhost.attacker.example", 403},
+		{"foreign origin", "aicp.localhost", "http://attacker.example", 403},
+		{"different port", "aicp.localhost", "http://aicp.localhost:7331", 403},
+		{"different alias", "aicp.localhost:7331", "http://localhost:7331", 403},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			request := httptest.NewRequest("PATCH", "http://"+test.host+"/api/v1/settings", strings.NewReader(`{"timezone":"Asia/Singapore"}`))
+			request.Header.Set("Content-Type", "application/json")
+			request.Header.Set("Origin", test.origin)
+			response := httptest.NewRecorder()
+			handler.ServeHTTP(response, request)
+			if response.Code != test.want {
+				t.Fatalf("status %d, want %d: %s", response.Code, test.want, response.Body.String())
+			}
+		})
+	}
+}
+
 func TestRejectsNonLoopbackHost(t *testing.T) {
 	s, err := store.Open(context.Background(), t.TempDir())
 	if err != nil {

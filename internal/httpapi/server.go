@@ -78,7 +78,7 @@ func New(a *app.App, assets http.Handler, version string) http.Handler {
 			host = host[:colon]
 		}
 		host = strings.Trim(host, "[]")
-		if host != "127.0.0.1" && host != "localhost" && host != "::1" {
+		if host != "127.0.0.1" && host != "localhost" && host != "::1" && host != "aicp.localhost" {
 			fail(w, &app.Error{Status: 403, Code: "host_rejected", Message: "Use the loopback aicp address"})
 			return
 		}

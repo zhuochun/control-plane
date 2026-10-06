@@ -78,6 +78,10 @@ configuration directory under `control-plane`. Set `AICP_DATA_DIR`, or pass
 `serve --data-dir <directory>`, to use another location. `init` prepares the
 database and defaults; ordinary commands call the running server.
 
+The portal also accepts <http://aicp.localhost:7331>. For a URL without the
+port, see [the local hostname setup](docs/local-hostname.md). Both addresses
+use the same running server and data.
+
 ```powershell
 .\dist\aicp.exe doctor
 .\dist\aicp.exe config set Asia/Singapore
