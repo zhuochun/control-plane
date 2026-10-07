@@ -1,69 +1,116 @@
 # aicp
 
-**aicp** is a small local control plane for agent work. Agents inspect sources
-with their existing tools and save source-backed findings. You decide what
-becomes a Todo, when to be reminded, and whether proposed monitoring changes are
-accepted.
+**A local workspace for what your AI agent finds—and what you choose to do next.**
 
-The application is one Go executable with an embedded React portal and a local
-SQLite database. It binds only to `127.0.0.1:7331`. Source credentials and agent
-scheduling stay outside aicp.
+Tell your agent what matters, give it specific places to look, and review the
+results in one place. aicp keeps findings, source links, follow-ups, and your
+notes together, so the next visit can build on the last one.
 
-For an installed binary, start with [GETTING_STARTED.md](GETTING_STARTED.md).
-It walks an agent and person through setup, the first inspection, and a return
-visit. `aicp --help` gives the same mental model and command entry points.
+![aicp Attention workspace showing a launch readiness report, a queue of customer and service findings, and follow-up controls](docs/images/aicp-attention.png)
 
-## Domain model
+*The running app with fictional Northstar product-team data. Select a finding
+on the left to read its evidence and decide on a follow-up. [Explore the demo](docs/showcase.md).*
 
-The durable configuration and work relationships are:
+## What you can do
 
-```text
-Watcher = a bounded source input, cadence, and source checkpoint
-Interest = a relevance filter and interpretation rule
-Run = one inspection attempt across up to 20 due Watchers
-Item = one continuing matter, with Item-local source references,
-       an originating Watcher when source-derived, and Interest reasons
-```
+- **Keep up with what matters.** Track launch blockers, customer feedback,
+  project updates, or service health against your own priorities.
+- **Review findings with context.** Read a report, see why it matters, and
+  follow its source links. Later evidence updates the same continuing matter.
+- **Choose your next step.** Acknowledge a finding, add a Todo, set a reminder,
+  or leave a note. Agent updates preserve your follow-up state.
+- **Keep useful knowledge.** Search retained items, revisit reports, and add
+  your own notes or instructions to the inbox.
+- **See what was actually checked.** Monitoring shows source coverage and
+  limitations; Activity shows completed and interrupted inspections.
 
-An **Interest** is the durable purpose: a title, free-form instructions, and
-an `active`, `paused`, or `deprecated` lifecycle state. A **Watcher** owns a
-bounded source, inspection cadence, optional validity end, and checkpoint.
-Broad Watchers assess all active Interests; explicit Watchers assess only their
-linked Interests. Changing links preserves Watcher identity and checkpoint.
+For example, an agent can review your project updates and customer notes,
+notice that a promised feature has no owner, and save a launch-risk report.
+You can mark it as a Todo and set a reminder. When the source changes, the
+agent can update the report while keeping your follow-up in place.
 
-An **Item** is retained work or knowledge. Its kind is
-`note`, `report`, `task`, or `outcome`; all kinds can contain Markdown content,
-source references, context, Todo state, reminders, acknowledgement state, and
-user notes. A user-created Item can have no source or a source date without a
-link. Agent-published source findings cite a Watcher, source reference, and
-one or more Interest reasons. A **Proposal** is an agent-suggested configuration
-change for review; it does not change configuration automatically.
+## Get started
 
-An Item can also retain small **delegation records**: who received work, its
-external continuation reference, instructions, and pending/blocked/closed
-follow-up. The primary agent chooses and launches executors through its own
-tools. Executors can read and update their assigned Item using
-`update_item_work`, without starting a source Run or reading the global inbox.
-Work updates preserve identity, provenance, Interest relevance, and user state.
-See the [Item-local delegation contract](docs/specs/20261002-agent-delegation-and-receipts-spec.md).
-For a short executor assignment and work-update example, use the
-[delegation handoff guide](examples/delegation-handoff.md).
+Download the archive for your operating system from
+[Releases](https://github.com/zhuochun/control-plane/releases), verify it with
+`checksums.txt`, and extract it. On Windows, run:
 
 ```powershell
-.\dist\aicp.exe item list --delegation-status pending,blocked --json
-.\dist\aicp.exe item work <item-id> --file work-update.json
+.\aicp.exe init
+.\aicp.exe serve
 ```
 
-Work payloads require `expected_content_version`; supplied report/context fields
-replace those fields after reconciliation. Delegation patches merge by ID, omitted
-fields remain, and empty lists remove nothing. Source scans retain delegated
-report/context; use work updates to reconcile new evidence with research. Global
-autonomous-follow-through guidance is in the application-configured `AGENTS.md`.
+Keep the server terminal open and visit <http://127.0.0.1:7331>.
+On macOS or Linux, use `./aicp` in place of `.\aicp.exe`.
 
-## Build from source
+1. In **Preferences**, describe your priorities and working context.
+2. In **Monitoring**, add an **Interest** (what matters to you) and a
+   **Watcher** (a specific source your agent should inspect).
+3. Connect your agent and ask it to complete a first inspection.
+4. Open **Attention** to review the results and choose your follow-ups.
 
-Development requires Node.js 24 and the Go version pinned in `go.mod`. The
-installed executable has no Node.js dependency.
+The [getting-started guide](GETTING_STARTED.md) walks you and your agent through
+setup, a first inspection, and later visits. You can also add personal items
+before connecting any sources.
+
+## Bring your agent
+
+Your agent accesses sources through its existing tools—for example, GitHub,
+Slack, email, or a browser—and saves findings through aicp's CLI or MCP interface.
+Both use the same local server as the portal.
+
+For Codex, register the executable using your installation's absolute path:
+
+```powershell
+codex mcp add aicp -- C:\absolute\path\aicp.exe mcp --server http://127.0.0.1:7331
+```
+
+Start `aicp serve` first. Ask the connected agent to read the brief, help configure
+your priorities and sources, then inspect the selected sources and publish its
+findings. The [agent workflow reference](docs/agent-workflow.md) explains the
+run contract and [heartbeat prompt](examples/heartbeat-prompt.md).
+
+For recurring inspections, use an external scheduler or agent automation;
+[the scheduling examples](examples/scheduling.md) show how. A Watcher records
+when a source is due; aicp does not launch or schedule agents itself.
+
+## How it fits together
+
+| In aicp | What it means for you |
+| --- | --- |
+| **Interest** | A priority and instructions for recognizing what matters |
+| **Watcher** | A bounded source, inspection cadence, and progress checkpoint |
+| **Item** | A finding, report, task, outcome, or personal note worth retaining |
+| **Attention** | Items with new evidence, an open Todo, or a due reminder |
+| **Run** | A recorded inspection, including coverage and limitations |
+| **Proposal** | A suggested monitoring change for you to accept or reject |
+
+One source can serve several Interests, and one Item can matter to several
+priorities. See the [glossary](docs/glossary.md) for the detailed vocabulary.
+
+## Local storage and control
+
+aicp is one executable with a built-in web portal and SQLite database. It
+listens on `127.0.0.1:7331`. Data defaults to your operating system's user
+configuration directory under `control-plane`; use `AICP_DATA_DIR` or
+`serve --data-dir <directory>` to choose another location.
+
+Source credentials stay with your agent's tools. What the agent sends to aicp
+is stored locally; access to external sources and any model processing follow
+your agent's configuration. Reminders resurface items in the portal.
+
+To back up, stop the server and copy the **whole data directory**. Restore it
+while the server is stopped. Copying only a live `.db` file can miss SQLite WAL
+changes. aicp refuses unsupported newer database schemas rather than resetting
+them. [Local hostname setup](docs/local-hostname.md) covers `aicp.localhost`.
+
+## Try the demo or build from source
+
+The [showcase guide](docs/showcase.md) recreates the screenshot with seven
+fictional findings, three priorities, and three source Watchers in a separate
+workspace. No source accounts are needed.
+
+For development, install Node.js 24 and the Go version pinned in `go.mod`:
 
 ```powershell
 npm --prefix web ci
@@ -73,146 +120,8 @@ go build -trimpath -o dist/aicp.exe ./cmd/aicp
 .\dist\aicp.exe serve
 ```
 
-Open <http://127.0.0.1:7331>. Data defaults to the operating system's user
-configuration directory under `control-plane`. Set `AICP_DATA_DIR`, or pass
-`serve --data-dir <directory>`, to use another location. `init` prepares the
-database and defaults; ordinary commands call the running server.
-
-The portal also accepts <http://aicp.localhost:7331>. For a URL without the
-port, see [the local hostname setup](docs/local-hostname.md). Both addresses
-use the same running server and data.
-
-```powershell
-.\dist\aicp.exe doctor
-.\dist\aicp.exe config set Asia/Singapore
-.\dist\aicp.exe interest create --slug delivery-risk --title "Delivery risk" --instructions-file interest.md
-.\dist\aicp.exe watcher create --slug gmail-inbox --source-kind gmail --source-locator inbox --matching-policy broad
-.\dist\aicp.exe watcher update gmail-inbox --revision 1 --matching-policy explicit --interest delivery-risk
-.\dist\aicp.exe config plan --file focus.json
-.\dist\aicp.exe config apply --file focus.json --preview-token "TOKEN_FROM_PLAN"
-.\dist\aicp.exe brief --json
-.\dist\aicp.exe run start
-.\dist\aicp.exe run submit <watch-id> --file findings.json
-.\dist\aicp.exe run finish --summary "Inspected selected Watches"
-```
-
-Simple configuration commands accept flags. Grouped configuration plans and
-complex finding/item payloads use JSON files. Configuration never starts a
-source Run. The normal run start and finish commands need no files. Use `aicp <command> --help`
-for the accepted shape. Descriptive instructions and reports remain free-form
-Markdown; JSON fields cover only identity, revisions, scheduling, source
-references, and user actions needed for safe operation.
-
-## Agent connection
-
-Start the HTTP server first. Register the same executable as a local MCP stdio
-adapter, using an absolute path in a real installation:
-
-```powershell
-codex mcp add aicp -- C:\absolute\path\aicp.exe mcp --server http://127.0.0.1:7331
-```
-
-`examples/heartbeat-prompt.md` is the reference run contract.
-`examples/heartbeat.ps1` and `examples/heartbeat.sh` show how an external
-scheduler can invoke a configured Codex harness with overlap protection. See
-`examples/scheduling.md`. aicp records when Watches are due; it does not launch
-an agent itself.
-
-### How an agent run works
-
-aicp is the local control plane, not the source connector or scheduler. An
-external heartbeat starts the agent, and the agent uses its existing tools to
-inspect sources:
-
-1. Call `start_run`. aicp returns `{run, context}` with captured owner/agent
-   context, applicable Interest instructions, selected Watcher snapshots and
-   prior limitations, the captured change range, and overview counts. Global
-   Attention is optional, not a mandatory backlog review.
-2. Read all applicable Interest pages and captured changes, then inspect only the selected Watchers
-   with the agent's Slack, browser, GitHub, Drive, or other tools. aicp never
-   receives source credentials or fetches those systems. Find existing matters
-   through bounded `list_items` / `item list` lookup before updating them.
-3. Call `submit_watch_findings` once per selected Watcher. The result records
-   coverage, limitations, the next cursor, and zero or more Item upserts. If a
-   Item names the captured Interest reasons and concrete source references.
-   `upsert_item` can retain an Interest-level agent note without Watcher
-   coverage; such a note does not enter Attention. Stable dedupe keys and
-   expected content versions let the agent update findings instead of
-   creating duplicates.
-4. Call `finish_run` only after every selected Watcher has a terminal result.
-   Successful coverage advances the Watcher checkpoint and next due time; failed
-   or partial coverage remains eligible for a later run.
-   If the external agent cannot finish, review the active run in Activity and
-   explicitly abandon it with a reason. Submitted findings and successful
-   checkpoints remain; unreported Watchers stay due and captured changes replay.
-5. Review the resulting Attention items. You can open sources, acknowledge
-   findings, set Todo or Done, add reminders, and accept or reject proposals.
-   The next run receives those local changes as context.
-
-The server does not promise that an inspection is running merely because a
-Watcher exists. Until an external runner connects, the portal reports that no
-agent run has been received.
-Monitoring shows each Watcher's latest inspection and due reason; Activity
-shows the active run and the number of due Watchers. Due work beyond the
-20-Watcher run limit remains visible for a later heartbeat.
-
-## Demo and verification
-
-The offline demo starts an isolated server, completes two fixture-backed run
-cycles through the public CLI, applies a Todo and reminder between cycles, and
-checks that later agent content preserves them:
-
-```powershell
-npm --prefix web run build
-go build -o dist/aicp.exe ./cmd/aicp
-.\scripts\demo.ps1
-```
-
-Run the complete local check with `scripts/verify.ps1`. It installs locked web
-dependencies, type-checks and builds the portal, runs Go tests and vet, builds
-the executable, runs Playwright, and then runs the demo. Install Chromium once
-with `npx --prefix web playwright install chromium` when needed.
-
-### Simulate OKR updates
-
-With `aicp serve` running, seed five different outcome metrics and then publish
-their next-period values through the normal run/publication path:
-
-```powershell
-.\scripts\okr-simulation.ps1 -Phase baseline
-.\scripts\okr-simulation.ps1 -Phase update
-```
-
-The simulator uses its own stable deduplication keys, so the second command
-updates the same metric items and preserves any local Todo or reminder state.
-
-## Backup and restore
-
-Stop `aicp serve` before copying its data directory. The database uses SQLite
-WAL mode, so copying only the live `.db` file is not a consistent backup. To
-restore, keep the server stopped, replace the whole data directory with the
-saved copy, and restart. aicp refuses a database created by a newer unsupported
-schema instead of resetting it.
-
-## Release archives
-
-GoReleaser builds macOS amd64/arm64, Linux amd64/arm64, and Windows amd64
-archives with `checksums.txt`:
-
-```powershell
-goreleaser release --snapshot --clean
-```
-
-Snapshot artifacts appear under `dist/` and are not published. The checked-in
-workflow creates a draft release for version tags and supports a manual snapshot
-run. Local verification and package smoke tests run on Windows; CI verifies
-Windows and Linux. macOS archives are cross-compiled until a native macOS runner
-is added. Generated assets, databases, credentials, and archives are ignored by
-Git.
-
-The current vocabulary is in [`docs/glossary.md`](docs/glossary.md), with the
-behavioral contract in the [Watcher–Interest model specification](docs/specs/20260924-watcher-interest-model-spec.md).
-For implementation ownership and focused verification commands, see the
-[architecture and verification map](docs/architecture.md).
-The deterministic fixture demo verifies the current local application path; it
-does not claim live Slack, Drive, or other connector access.
+The installed executable does not need Node.js. For testing, packaging, and
+metric simulations, see [development and verification](docs/development.md).
+Implementation owners and focused checks are in the
+[architecture map](docs/architecture.md); Item-local agent assignments are
+covered by the [delegation handoff guide](examples/delegation-handoff.md).
