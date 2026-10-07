@@ -1,59 +1,68 @@
 # aicp
 
-**A local workspace for what your AI agent finds—and what you choose to do next.**
+**Your agent runs the loop. You review what matters.**
 
-Tell your agent what matters, give it specific places to look, and review the
-results in one place. aicp keeps findings, source links, follow-ups, and your
-notes together, so the next visit can build on the last one.
+aicp is an agent-first control plane for ongoing monitoring, research, and
+delegated work. Tell your agent your interests and the sources to look after.
+It sets up the workspace, inspects new evidence, investigates or delegates
+follow-through, and brings you reports and decisions to review.
 
 ![aicp Attention workspace showing a launch readiness report, a queue of customer and service findings, and follow-up controls](docs/images/aicp-attention.png)
 
-*The running app with fictional Northstar product-team data. Select a finding
-on the left to read its evidence and decide on a follow-up. [Explore the demo](docs/showcase.md).*
+*The agent's output, ready for review: source-backed findings, tables, diagrams,
+and decisions. The Northstar demo uses fictional source material. [Explore the demo](docs/showcase.md).*
 
-## What you can do
+## Get started: ask your agent
 
-- **Keep up with what matters.** Track launch blockers, customer feedback,
-  project updates, or service health against your own priorities.
-- **Review findings with context.** Read a report, see why it matters, and
-  follow its source links. Later evidence updates the same continuing matter.
-- **Choose your next step.** Acknowledge a finding, add a Todo, set a reminder,
-  or leave a note. Agent updates preserve your follow-up state.
-- **Keep useful knowledge.** Search retained items, revisit reports, and add
-  your own notes or instructions to the inbox.
-- **See what was actually checked.** Monitoring shows source coverage and
-  limitations; Activity shows completed and interrupted inspections.
+Copy this into your agent:
 
-For example, an agent can review your project updates and customer notes,
-notice that a promised feature has no owner, and save a launch-risk report.
-You can mark it as a Todo and set a reminder. When the source changes, the
-agent can update the report while keeping your follow-up in place.
+> Install and set up aicp from https://github.com/zhuochun/control-plane.
+> Follow its GETTING_STARTED.md, connect yourself through CLI or MCP, and open
+> the review portal when ready.
 
-## Get started
+Then give it a purpose:
 
-Download the archive for your operating system from
-[Releases](https://github.com/zhuochun/control-plane/releases), verify it with
-`checksums.txt`, and extract it. On Windows, run:
+> Track our October launch and customer onboarding. Watch Slack
+> #launch-readiness and customer email from the pilot accounts using your
+> existing tools. Keep findings in aicp, investigate and delegate useful
+> follow-ups within my authority, and bring me decisions with evidence.
 
-```powershell
-.\aicp.exe init
-.\aicp.exe serve
-```
+The agent handles installation, owner context, Interests, and Watchers. It
+checks source access and completes a first inspection before setting up recurring
+checks through its available scheduler. The [getting-started contract](GETTING_STARTED.md)
+and [copyable prompts](examples/install-prompt.md) give it the details.
 
-Keep the server terminal open and visit <http://127.0.0.1:7331>.
-On macOS or Linux, use `./aicp` in place of `.\aicp.exe`.
+## The agent's working loop
 
-1. In **Preferences**, describe your priorities and working context.
-2. In **Monitoring**, add an **Interest** (what matters to you) and a
-   **Watcher** (a specific source your agent should inspect).
-3. Connect your agent and ask it to complete a first inspection.
-4. Open **Attention** to review the results and choose your follow-ups.
+1. **Keep your interests current.** The agent turns your priorities into durable
+   instructions and bounded source Watchers.
+2. **Inspect and reconcile.** It reads selected Slack channels, email, GitHub,
+   documents, or other sources through its existing tools, then updates the same
+   continuing Items with evidence and relevance reasons.
+3. **Advance the work.** Within your authority, it investigates or delegates
+   bounded work. Handoffs, continuation references, results, and remaining
+   questions stay with the Item.
+4. **Deliver something worth reviewing.** It publishes reports with Markdown,
+   tables, charts, diagrams, and structured questions. Material decisions come
+   with context and a recommendation.
+5. **Continue from your response.** Your answers and notes persist for later
+   agent work; your Todo, reminder, and acknowledgement state survives updates.
 
-The [getting-started guide](GETTING_STARTED.md) walks you and your agent through
-setup, a first inspection, and later visits. You can also add personal items
-before connecting any sources.
+For example, Slack says SSO is ready, while a customer email makes audit-log
+export a pilot condition. The agent joins those facts in a launch Item, delegates
+an assessment of the options, and brings you a recommendation, dependency
+diagram, and scope decision. You review the work instead of reconstructing it
+from several conversations.
 
-## Bring your agent
+## Review the work
+
+Open <http://127.0.0.1:7331> when the agent has results for you. **Attention**
+surfaces new evidence and follow-ups. Outcome Items show metric trends;
+reports can combine tables, diagrams, and review controls. Filter or search the
+retained work, check source links, save an answer, or leave instructions for
+the next visit. Monitoring and Activity expose coverage and Run history.
+
+## How the agent connects
 
 Your agent accesses sources through its existing tools—for example, GitHub,
 Slack, email, or a browser—and saves findings through aicp's CLI or MCP interface.

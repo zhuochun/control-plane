@@ -26,11 +26,14 @@ try {
   await expect(page.getByRole("heading", { name: "Launch readiness", exact: true })).toBeVisible();
   await expect(page.getByRole("button", { name: "Mark Done", exact: true })).toBeVisible();
   await expect(page.getByRole("table")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Enlarge Launch dependencies" })).toBeVisible();
   await expect(page.getByRole("link", { name: /Launch review · engineering & product/ })).toBeVisible();
   await page.evaluate(() => document.fonts.ready);
   if (errors.length) throw new Error(errors.join("\n"));
   mkdirSync(output, { recursive: true });
   await page.screenshot({ path: output + "aicp-attention.png", animations: "disabled" });
+  await page.getByRole("heading", { name: "Choose launch scope", exact: true }).scrollIntoViewIfNeeded();
+  await page.screenshot({ path: output + "aicp-review.png", animations: "disabled" });
   console.log("Saved docs/images/aicp-attention.png (1440 x 1280).");
 } finally {
   await browser.close();

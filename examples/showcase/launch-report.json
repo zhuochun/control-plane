@@ -1,0 +1,54 @@
+{
+  "schema_version": 2,
+  "body_md": "## Launch readiness\n\n**Recommendation:** proceed with an admin-only SSO pilot for up to three design partners, confirming each account's consent, export expectations, and stop/recovery plan. Meridian accepts this limited trial; broader operations access should wait.\n\n**Limits:** October 16 is a target. Broader rollout needs committed export scope, customer review of the example and fields, broader-access acceptance, and actual recovery evidence. These conclusions use only fictional Slack/email fixtures; no live accounts were accessed. Choose the scope below.\n\n| Evidence | Supported scope or limit |\n| --- | --- |\n| [Slack: Engineering](https://example.com/northstar/slack/launch-readiness): SSO passed staging; three partners can start. | Admin-only pilot, with account-specific consent. |\n| [Email: Meridian](https://example.com/northstar/email/meridian-pilot): admin trial may proceed during export review. | Broader access needs an export example and confirmed fields. |\n| [Slack: Engineering](https://example.com/northstar/slack/launch-readiness): export owner and date are uncommitted. | Confirm ownership and scope before offering dates. |\n| [Slack: Platform](https://example.com/northstar/slack/launch-readiness): rollback rehearsal booked for October 12. | Booking is not tested recovery; assess the result. |\n\nLaunch dependencies: SSO and account consent support the admin-only pilot; export scope/example and recovery evidence support broader rollout readiness. Both inform the human scope choice.\n\nChoose one launch direction: bounded admin-only pilot; hold invitations; or pursue broader rollout after readiness conditions are verified. Optional: record account constraints or required evidence.",
+  "blocks": [
+    {
+      "id": "launch-assessment",
+      "type": "markdown",
+      "body_md": "## Launch readiness\n\n**Recommendation:** proceed with an admin-only SSO pilot for up to three design partners, confirming each account's consent, export expectations, and stop/recovery plan. Meridian accepts this limited trial; broader operations access should wait.\n\n**Limits:** October 16 is a target. Broader rollout needs committed export scope, customer review of the example and fields, broader-access acceptance, and actual recovery evidence. These conclusions use only fictional Slack/email fixtures; no live accounts were accessed. Choose the scope below.\n\n| Evidence | Supported scope or limit |\n| --- | --- |\n| [Slack: Engineering](https://example.com/northstar/slack/launch-readiness): SSO passed staging; three partners can start. | Admin-only pilot, with account-specific consent. |\n| [Email: Meridian](https://example.com/northstar/email/meridian-pilot): admin trial may proceed during export review. | Broader access needs an export example and confirmed fields. |\n| [Slack: Engineering](https://example.com/northstar/slack/launch-readiness): export owner and date are uncommitted. | Confirm ownership and scope before offering dates. |\n| [Slack: Platform](https://example.com/northstar/slack/launch-readiness): rollback rehearsal booked for October 12. | Booking is not tested recovery; assess the result. |"
+    },
+    {
+      "id": "launch-dependencies",
+      "type": "diagram",
+      "language": "mermaid",
+      "source": "flowchart LR\n    SSO[SSO and account consent] --> PILOT[Admin-only pilot]\n    EXPORT[Export scope and example] --> BROAD[Broader rollout readiness]\n    RECOVERY[Recovery evidence] --> BROAD\n    PILOT --> CHOICE[Human scope choice]\n    BROAD --> CHOICE",
+      "description": "Pilot and broader-rollout readiness inform the human scope choice; unresolved gates are not completed work.",
+      "caption": "Launch dependencies"
+    },
+    {
+      "id": "launch-direction-review",
+      "type": "review",
+      "title": "Choose launch scope",
+      "blocks": [
+        {
+          "id": "launch-scope",
+          "type": "choice",
+          "question": "Which launch direction should the team pursue?",
+          "selection": "single",
+          "required": true,
+          "options": [
+            {
+              "id": "admin-only-pilot",
+              "label": "Bounded admin-only SSO pilot (recommended)"
+            },
+            {
+              "id": "hold-invitations",
+              "label": "Hold invitations pending more readiness evidence"
+            },
+            {
+              "id": "broader-after-gates",
+              "label": "Pursue broader rollout after readiness conditions are verified"
+            }
+          ]
+        },
+        {
+          "id": "launch-constraints",
+          "type": "text_input",
+          "question": "What account constraints or evidence requirements should guide this direction?",
+          "required": false
+        }
+      ],
+      "submit_label": "Save launch direction"
+    }
+  ]
+}

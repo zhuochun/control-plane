@@ -62,9 +62,9 @@ try {
     Invoke-Aicp @('config', 'user-context', 'set', '--file', $owner) | Out-Null
 
     $definitions = @(
-        @{ key='launch'; title='Launch readiness'; instructions='Track blockers and scope changes for the October launch. Explain impact, owner, and next decision.'; locator='Northstar launch updates'; cadence=3600 },
-        @{ key='customers'; title='Customer onboarding'; instructions='Notice onboarding friction and repeat requests. Distinguish one account from a recurring pattern.'; locator='Northstar customer success notes'; cadence=14400 },
-        @{ key='health'; title='Service health & cost'; instructions='Track reliability and unit cost. Compare complete periods with the same workload and flag missing evidence.'; locator='Northstar weekly service review'; cadence=86400 }
+        @{ key='launch'; title='Launch readiness'; instructions='Track blockers and scope changes for the October launch. Explain impact, owner, and next decision.'; locator='Northstar Slack #launch-readiness (fictional fixture)'; cadence=3600 },
+        @{ key='customers'; title='Customer onboarding'; instructions='Notice onboarding friction and repeat requests. Distinguish one account from a recurring pattern.'; locator='Northstar pilot email and activation cohorts (fictional fixtures)'; cadence=14400 },
+        @{ key='health'; title='Service health & cost'; instructions='Track reliability and unit cost. Compare complete periods with the same workload and flag missing evidence.'; locator='Northstar weekly service review (fictional fixture)'; cadence=86400 }
     )
     $interests = @{}
     $watches = @{}
@@ -99,7 +99,7 @@ try {
 
 ### Decision needed
 
-Customer Success has promised audit-log export to two pilot accounts. Engineering has not committed a delivery date. Agree on the owner and scope at Thursday's launch review.
+Two pilot accounts requested audit-log export. Meridian allows a small admin-only trial while reviewing export details; broader access needs an export example and field confirmation. Engineering has not committed an owner or delivery date. Agree on scope at the launch review.
 
 ### What changed
 
