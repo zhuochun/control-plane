@@ -112,7 +112,7 @@ export function ItemReader({
                       })
                     }
                   >
-                    Acknowledge
+                    Mark seen
                   </Button>
                 )}
                 <Button
@@ -146,18 +146,6 @@ export function ItemReader({
                   {reason}
                 </span>
               ))}
-              {!!item.interests?.length && (
-                <span>
-                  Interest:{" "}
-                  {item.interests
-                    .map(
-                      (reason) =>
-                        interests.find((entry) => entry.id === reason.id)
-                          ?.title ?? reason.id,
-                    )
-                    .join(", ")}
-                </span>
-              )}
               <span>
                 Updated{" "}
                 {formatDateTime(
@@ -386,6 +374,7 @@ export function ItemReader({
           close={() => setReminder(false)}
           apply={(action) => item && apply(item, action)}
           error={mutation.error}
+          pending={mutation.isPending}
         />
       )}
     </section>

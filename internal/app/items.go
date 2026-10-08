@@ -530,11 +530,16 @@ func (a *App) putItemTx(ctx context.Context, tx *sql.Tx, id string, input PutIte
 	return current, a.event(ctx, tx, actor, "item", current.ID, "item.content_updated", map[string]any{"content_version": version})
 }
 
-type ItemFilters struct{ View, Kind, InterestID, WatchID, Query, DedupeKey, DelegationStatus, Executor, ExternalRef string }
+type ItemFilters struct{ View, Kind, InterestID, WatchID, Query, DedupeKey, DelegationStatus, Executor, ExternalRef, Sort string }
 
 const attentionPredicate = `(origin<>'agent' OR watch_id IS NOT NULL) AND (todo_state='todo' OR acknowledged_content_version<content_version OR (remind_at IS NOT NULL AND remind_at<=?))`
 
 func (a *App) itemWhere(ctx context.Context, filter ItemFilters) (string, []any, error) {
+	switch filter.Sort {
+	case "", "priority", "newest", "oldest", "title":
+	default:
+		return "", nil, Invalid("sort must be priority, newest, oldest, or title")
+	}
 	query := " FROM items WHERE 1=1"
 	args := []any{}
 	delegationWhere, delegationArgs, err := delegationFilter(filter)
@@ -597,13 +602,31 @@ func (a *App) itemWhere(ctx context.Context, filter ItemFilters) (string, []any,
 const itemOrderBucket = `CASE WHEN remind_at IS NOT NULL AND remind_at<=? THEN 0 WHEN todo_state='todo' THEN 1 ELSE 2 END`
 const itemOrder = ` ORDER BY ` + itemOrderBucket + `, COALESCE(remind_at,content_updated_at),content_updated_at DESC,id`
 
+// Only allowlisted expressions reach SQL. IDs break ties across pages.
+func simpleItemSort(value string) (column, direction, comparison string) {
+	switch value {
+	case "newest":
+		return "content_updated_at", "DESC", "<"
+	case "oldest":
+		return "content_updated_at", "ASC", ">"
+	case "title":
+		return "title COLLATE NOCASE", "ASC", ">"
+	default:
+		return "", "", ""
+	}
+}
+
 func (a *App) Items(ctx context.Context, filter ItemFilters) ([]Item, error) {
 	where, args, err := a.itemWhere(ctx, filter)
 	if err != nil {
 		return nil, err
 	}
 	query := "SELECT " + itemColumns + where + itemOrder
-	args = append(args, a.Now().UTC().UnixMilli())
+	if column, direction, _ := simpleItemSort(filter.Sort); column != "" {
+		query = "SELECT " + itemColumns + where + " ORDER BY " + column + " " + direction + ",id"
+	} else {
+		args = append(args, a.Now().UTC().UnixMilli())
+	}
 	rows, err := a.Store.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
@@ -632,7 +655,20 @@ func (a *App) ItemsPage(ctx context.Context, filter ItemFilters, afterID string,
 		return nil, false, err
 	}
 	now := a.Now().UTC().UnixMilli()
-	if afterID != "" {
+	column, direction, comparison := simpleItemSort(filter.Sort)
+	if afterID != "" && column != "" {
+		var value any
+		cursorArgs := append(append([]any{}, args...), afterID)
+		err = a.Store.DB.QueryRowContext(ctx, "SELECT "+column+where+" AND id=?", cursorArgs...).Scan(&value)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, false, Invalid("Continuation cursor is not in this collection")
+		}
+		if err != nil {
+			return nil, false, err
+		}
+		where += " AND (" + column + comparison + "? OR (" + column + "=? AND id>?))"
+		args = append(args, value, value, afterID)
+	} else if afterID != "" {
 		var bucket int
 		var sortTime, updated int64
 		cursorArgs := append([]any{now}, args...)
@@ -648,7 +684,12 @@ func (a *App) ItemsPage(ctx context.Context, filter ItemFilters, afterID string,
 		args = append(args, now, bucket, now, bucket, sortTime, sortTime, updated, updated, afterID)
 	}
 	query := "SELECT " + itemColumns + where + itemOrder + " LIMIT ?"
-	args = append(args, now, limit+1)
+	if column != "" {
+		query = "SELECT " + itemColumns + where + " ORDER BY " + column + " " + direction + ",id LIMIT ?"
+		args = append(args, limit+1)
+	} else {
+		args = append(args, now, limit+1)
+	}
 	rows, err := a.Store.DB.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, false, err

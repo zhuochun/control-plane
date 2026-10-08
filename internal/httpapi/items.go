@@ -26,7 +26,7 @@ func itemRoutes(mux *http.ServeMux, a *app.App) {
 			}
 			afterID = string(decoded)
 		}
-		items, more, err := a.ItemsPage(r.Context(), app.ItemFilters{View: r.URL.Query().Get("view"), Kind: r.URL.Query().Get("kind"), InterestID: r.URL.Query().Get("interest_id"), WatchID: r.URL.Query().Get("watch_id"), Query: r.URL.Query().Get("q"), DedupeKey: r.URL.Query().Get("dedupe_key"), DelegationStatus: r.URL.Query().Get("delegation_status"), Executor: r.URL.Query().Get("executor"), ExternalRef: r.URL.Query().Get("external_ref")}, afterID, limit)
+		items, more, err := a.ItemsPage(r.Context(), app.ItemFilters{Sort: r.URL.Query().Get("sort"), View: r.URL.Query().Get("view"), Kind: r.URL.Query().Get("kind"), InterestID: r.URL.Query().Get("interest_id"), WatchID: r.URL.Query().Get("watch_id"), Query: r.URL.Query().Get("q"), DedupeKey: r.URL.Query().Get("dedupe_key"), DelegationStatus: r.URL.Query().Get("delegation_status"), Executor: r.URL.Query().Get("executor"), ExternalRef: r.URL.Query().Get("external_ref")}, afterID, limit)
 		if err != nil {
 			return nil, err
 		}

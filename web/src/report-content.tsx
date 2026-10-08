@@ -649,6 +649,7 @@ function ReportActions({ item, ids }: { item: Item; ids: string[] }) {
           close={() => setReminder(false)}
           apply={(action) => apply(item, action)}
           error={mutation.error}
+          pending={mutation.isPending}
         />
       )}
     </>

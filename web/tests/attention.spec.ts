@@ -1,5 +1,40 @@
 import { expect, test } from "./fixtures";
 
+test("discovered Watcher review shows source and cadence before a decision", {
+  tag:["@case:attention-09", "@feature:setup", "@concern:ui", "@concern:functional", "@profile:core"],
+}, async ({page, request}) => {
+  const slug = `discovered-${crypto.randomUUID()}`;
+  const longURL = "https://example.com/evidence/" + "long-source-reference".repeat(20);
+  const response = await request.post("/api/v1/proposals", {data:{proposal_key:slug, target_type:"watch", operation:"create", rationale_md:"Review this separately discovered source.", evidence_links:[longURL], payload:{slug, source:{kind:"fixture", locator:"Fictional support queue"}, instructions_md:"Track recurring onboarding friction.", matching_policy:"broad", interval_seconds:86400, lookback_seconds:604800}}});
+  expect(response.ok(), await response.text()).toBeTruthy();
+  const proposal = await response.json();
+  await page.goto("/");
+  await page.getByRole("link", {name:"1 proposal to review", exact:true}).click();
+  const card = page.locator(".proposal-card").filter({hasText:"Review this separately discovered source."});
+  for (const width of [390, 780, 1440]) {
+    await page.setViewportSize({width, height:900});
+    await expect.poll(() => page.locator(".workspace-list").evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+    await expect(card.getByRole("link", {name:longURL,exact:true})).toHaveAttribute("href",longURL);
+  }
+  await card.getByRole("button", {name:"Review proposal", exact:true}).click();
+  const dialog = page.getByRole("dialog", {name:"Review proposed Watcher"});
+  await expect(dialog.getByText("Fictional support queue", {exact:true})).toBeVisible();
+  await expect(dialog.getByText("1 day", {exact:true})).toBeVisible();
+  await expect(dialog.getByText("7 days", {exact:true})).toBeVisible();
+  await expect(dialog.getByText("All active Interests", {exact:true})).toBeVisible();
+  await expect(dialog.getByRole("button", {name:"Accept proposal",exact:true})).toBeEnabled();
+  // Review is readable on a phone and cancellation does not apply anything.
+  await page.setViewportSize({width:390,height:844});
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBeTruthy();
+  await expect.poll(() => dialog.locator(".proposal-review-content").evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  await dialog.getByRole("button", {name:"Back",exact:true}).click();
+  await expect(dialog).toHaveCount(0);
+  const pending = await (await request.get("/api/v1/proposals?state=pending")).json();
+  expect(pending.items.some((entry:{id:string}) => entry.id === proposal.id)).toBeTruthy();
+  await card.getByRole("button", {name:"Reject",exact:true}).click();
+  await expect(card).toHaveCount(0);
+});
+
 test(
   "Todos opens directly and survives reload",
   {
@@ -153,7 +188,7 @@ test(
       .poll(async () => Number(await libraryCount.textContent()))
       .toBeGreaterThanOrEqual(before + 1);
     await page
-      .getByRole("button", { name: new RegExp(`User idea ${marker}`) })
+      .locator(".queue-row").filter({hasText:`User idea ${marker}`})
       .click();
     await expect(page.getByRole("link", { name: /Full detail/ })).toHaveCount(
       0,
@@ -205,7 +240,7 @@ test(
 
     await page.goto("http://127.0.0.1:7331/");
     await page
-      .getByRole("button", { name: /Confirm the rollout sequence/ })
+      .locator(".queue-row").filter({hasText:"Confirm the rollout sequence"})
       .click();
     await expect(page.getByRole("link", { name: /Full detail/ })).toHaveCount(
       0,
@@ -224,14 +259,14 @@ test(
     await expect(
       page.getByRole("button", { name: "Clear reminder" }),
     ).toBeVisible();
-    await expect(page.getByText(/Reminder/)).toBeVisible();
+    await expect(page.locator(".reader-reminder")).toBeVisible();
 
     await page.reload();
     await page
-      .getByRole("button", { name: /Confirm the rollout sequence/ })
+      .locator(".queue-row").filter({hasText:"Confirm the rollout sequence"})
       .click();
     await expect(page.getByRole("button", { name: "Mark Done" })).toBeVisible();
-    await expect(page.getByText(/Reminder/)).toBeVisible();
+    await expect(page.locator(".reader-reminder")).toBeVisible();
     await page.getByRole("button", { name: "Mark Done" }).click();
     await expect(
       page.getByRole("button", { name: "Reopen Todo" }),
@@ -271,9 +306,20 @@ test(
     expect(response.ok()).toBeTruthy();
 
     await page.goto("http://127.0.0.1:7331/");
+    await page.getByRole("link", {name:"1 proposal to review",exact:true}).click();
     await expect(page.getByText("Useful signal:")).toBeVisible();
-    await page.getByRole("button", { name: "Accept" }).click();
+    await page.getByRole("button", { name: "Review proposal" }).click();
+    const review = page.getByRole("dialog", {name:"Review proposed Interest",exact:true});
+    await expect(review.getByText("Gentle release watch", {exact:true})).toBeVisible();
+    await expect(review.getByText("Notice meaningful release changes.", {exact:true})).toBeVisible();
+    // Opening review does not apply the proposal.
+    await review.getByRole("button", {name:"Back", exact:true}).click();
+    await expect(review).toHaveCount(0);
+    await expect(page.getByText("Useful signal:")).toBeVisible();
+    await page.getByRole("button", {name:"Review proposal"}).click();
+    await review.getByRole("button", {name:"Accept proposal", exact:true}).click();
     await expect(page.getByText("Useful signal:")).toHaveCount(0);
+    await page.getByRole("dialog", {name:"Proposals to review",exact:true}).getByRole("button", {name:"Close",exact:true}).click();
 
     await page.getByRole("button", { name: "Workspace", exact: true }).click();
     await page

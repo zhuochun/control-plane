@@ -16,9 +16,10 @@ import { AnswerNotes, ReportContent } from "./report-content";
 import { api, APIError, collection } from "./api";
 import type { ReportBlock, ReviewAnswer } from "./report-types";
 import {
-  dateInputValue,
   effectiveTimezone,
   formatDateTime,
+  reminderDate,
+  timezoneLabel,
   useSettings,
 } from "./settings";
 
@@ -318,16 +319,21 @@ export function useItemAction(itemId: string, onSuccess?: () => void) {
       cache.invalidateQueries({ queryKey: ["status"] });
       onSuccess?.();
     },
+    onError: () => {
+      cache.invalidateQueries({ queryKey: ["item", itemId] });
+      cache.invalidateQueries({ queryKey: ["items"] });
+    },
   });
   return {
     mutation,
-    apply: (item: Item, action: object) => mutation.mutate({ item, action }),
+    apply: (item: Item, action: object) => mutation.mutate({ item, action: { content_version: item.content_version, ...action } }),
   };
 }
 
 export function ProposalCard({ proposal, candidates }: { proposal: Proposal; candidates: Proposal[] }) {
   const cache = useQueryClient();
   const [mergeOpen,setMergeOpen]=useState(false);
+  const [reviewOpen, setReviewOpen] = useState(false);
   const [mergeInto,setMergeInto]=useState("");
   const planPreview=useQuery({queryKey:["proposal-plan-preview",proposal.id],queryFn:()=>api<{due_before:number;due_after:number;changes:{target_type:string;operation:string;target:string;cursor_reset:boolean;affected_items:number}[]}>("/config/plans/preview",proposal.payload,"POST"),enabled:proposal.target_type==="config_plan"&&!!proposal.payload});
   const request = useRef<{ signature: string; id: string } | null>(null);
@@ -344,9 +350,11 @@ export function ProposalCard({ proposal, candidates }: { proposal: Proposal; can
     },
     onSuccess: () => {
       setMergeOpen(false);
+      setReviewOpen(false);
       cache.invalidateQueries({ queryKey: ["proposals"] });
       cache.invalidateQueries({ queryKey: ["interests"] });
       cache.invalidateQueries({ queryKey: ["watches"] });
+      cache.invalidateQueries({ queryKey: ["status"] });
     },
   });
   return (
@@ -374,16 +382,34 @@ export function ProposalCard({ proposal, candidates }: { proposal: Proposal; can
           variant="contained"
           size="small"
           disabled={resolve.isPending||(proposal.target_type==="config_plan"&&!planPreview.data)}
-          onClick={() => resolve.mutate({resolution:"accepted"})}
+          onClick={() => setReviewOpen(true)}
         >
-          Accept
+          Review proposal
         </Button>
-        <Button size="small" onClick={() => resolve.mutate({resolution:"rejected"})}>
+        <Button size="small" disabled={resolve.isPending} onClick={() => resolve.mutate({resolution:"rejected"})}>
           Reject
         </Button>
-        <Button size="small" onClick={()=>resolve.mutate({resolution:"snoozed",snooze_until:new Date(Date.now()+7*86400000).toISOString()})}>Snooze 7 days</Button>
+        <Button size="small" disabled={resolve.isPending} onClick={()=>resolve.mutate({resolution:"snoozed",snooze_until:new Date(Date.now()+7*86400000).toISOString()})}>Snooze 7 days</Button>
         {candidates.length>1&&<Button size="small" onClick={()=>setMergeOpen(true)}>Merge…</Button>}
       </div>
+      <Dialog open={reviewOpen} onClose={() => { if (!resolve.isPending) setReviewOpen(false); }} fullWidth maxWidth="sm" aria-labelledby={`proposal-title-${proposal.id}`}>
+        <DialogTitle id={`proposal-title-${proposal.id}`}>Review proposed {proposal.target_type === "watch" ? "Watcher" : proposal.target_type === "interest" ? "Interest" : "configuration changes"}</DialogTitle>
+        <DialogContent dividers className="proposal-review-content">
+          <p>Accepting will {proposal.operation === "create" ? "add" : proposal.operation} this {proposal.target_type === "watch" ? "Watcher" : proposal.target_type === "interest" ? "Interest" : "configuration"}. Monitoring changes apply to future inspections.</p>
+          <ReactMarkdown skipHtml>{proposal.rationale_md}</ReactMarkdown>
+          <ProposalDetails payload={proposal.payload} />
+          {planPreview.data && <div className="proposal-review-details">
+            <p>Due Watchers: {planPreview.data.due_before} → {planPreview.data.due_after}</p>
+            {planPreview.data.changes.map((change, index) => <p key={index}>{change.operation} {change.target_type} <strong>{change.target}</strong>{change.cursor_reset && " · resets source cursor"}{change.affected_items > 0 && ` · ${change.affected_items} existing Items`}</p>)}
+          </div>}
+          {!!proposal.evidence_links?.length && <div><h3>Evidence</h3>{proposal.evidence_links.map(link => <p key={link}><a href={link} target="_blank" rel="noopener noreferrer">{link}</a></p>)}</div>}
+          {resolve.isError && <Alert severity="error">{resolve.error.message} Refresh to review the current configuration.</Alert>}
+        </DialogContent>
+        <DialogActions>
+          <Button disabled={resolve.isPending} onClick={() => setReviewOpen(false)}>Back</Button>
+          <Button variant="contained" disabled={resolve.isPending || (proposal.target_type === "config_plan" && !planPreview.data)} onClick={() => resolve.mutate({resolution:"accepted"})}>{resolve.isPending ? "Accepting…" : "Accept proposal"}</Button>
+        </DialogActions>
+      </Dialog>
       <Dialog open={mergeOpen} onClose={()=>setMergeOpen(false)}><DialogTitle>Merge duplicate proposal</DialogTitle><DialogContent>
         <TextField select fullWidth label="Keep proposal" value={mergeInto} onChange={(event)=>setMergeInto(event.target.value)}>
           {candidates.filter((candidate)=>candidate.id!==proposal.id).map((candidate)=><MenuItem key={candidate.id} value={candidate.id}>{candidate.proposal_key}</MenuItem>)}
@@ -398,20 +424,42 @@ export function ProposalCard({ proposal, candidates }: { proposal: Proposal; can
   );
 }
 
+function ProposalDetails({ payload }: { payload?: object }) {
+  const settings = useSettings();
+  const interests = useQuery({queryKey:["interests"], queryFn:() => collection<{id:string; title:string}>("/interests?state=all")});
+  if (!payload) return null;
+  const labels: Record<string, string> = { slug: "Name", title: "Title", source: "Source", instructions_md: "Instructions", interval_seconds: "Check every", lookback_seconds: "Look back", matching_policy: "Interest matching", interest_ids: "Interests", state: "State", valid_until: "Valid until", clear_valid_until: "Clear validity end", operations: "Changes" };
+  function display(key:string, value:unknown): React.ReactNode {
+    if (value === null) return "None";
+    if (key === "source" && typeof value === "object" && "locator" in value && "kind" in value) return <><span>{String(value.locator)}</span> <small>({String(value.kind)})</small></>;
+    if ((key === "interval_seconds" || key === "lookback_seconds") && typeof value === "number") {
+      const unit = value % 86400 === 0 ? [86400,"day"] as const : value % 3600 === 0 ? [3600,"hour"] as const : value % 60 === 0 ? [60,"minute"] as const : [1,"second"] as const;
+      const amount = value / unit[0];
+      return `${amount} ${unit[1]}${amount === 1 ? "" : "s"}`;
+    }
+    if (key === "matching_policy") return value === "broad" ? "All active Interests" : "Selected Interests only";
+    if (key === "interest_ids" && Array.isArray(value)) return value.length ? value.map(id => interests.data?.find(interest => interest.id === id)?.title ?? id).join(", ") : "No explicit Interests";
+    if (key === "valid_until" && typeof value === "string") return formatDateTime(value, settings.data?.timezone);
+    if (Array.isArray(value)) return <ol>{value.map((entry, index) => <li key={index}>{entry && typeof entry === "object" ? <ProposalDetails payload={entry} /> : String(entry)}</li>)}</ol>;
+    if (typeof value === "object") return <ProposalDetails payload={value} />;
+    return String(value);
+  }
+  return <dl className="proposal-review-details">{Object.entries(payload).map(([key, value]) => <div key={key}><dt>{labels[key] ?? key.replaceAll("_", " ")}</dt><dd>{display(key, value)}</dd></div>)}</dl>;
+}
+
 export function ReminderDialog({
   close,
   apply,
   error,
+  pending = false,
 }: {
   close: () => void;
   apply: (action: object) => void;
   error: Error | null;
+  pending?: boolean;
 }) {
   const settings = useSettings();
-  const tomorrow = dateInputValue(
-    new Date(Date.now() + 86400000),
-    settings.data?.timezone,
-  );
+  const tomorrow = reminderDate(1, settings.data?.timezone);
   const [date, setDate] = useState(tomorrow);
   const [clock, setClock] = useState("09:00");
   const [timezone, setTimezone] = useState<string | null>(null);
@@ -421,10 +469,11 @@ export function ReminderDialog({
       ? (error.details?.utc_offsets as string[] | undefined)
       : undefined;
   return (
-    <Dialog open onClose={close} fullWidth maxWidth="xs">
+    <Dialog open onClose={() => { if (!pending) close(); }} fullWidth maxWidth="xs" aria-labelledby="reminder-title">
       <form
         onSubmit={(e) => {
           e.preventDefault();
+          if (pending) return;
           apply({
             type: "set_reminder",
             date,
@@ -434,10 +483,13 @@ export function ReminderDialog({
           });
         }}
       >
-        <DialogTitle>Remind me</DialogTitle>
+        <DialogTitle id="reminder-title">Remind me</DialogTitle>
         <DialogContent>
           <div className="editor-fields">
-            <p>Set one local reminder for this item.</p>
+            <p>Choose a day at 9 AM, or set a custom time. A reminder keeps existing todos and new evidence in Attention.</p>
+            <div className="reminder-presets">
+              {[{label:"Tomorrow", days:1}, {label:"Next week", days:7}].map(preset => <Button key={preset.label} disabled={pending} variant={date === reminderDate(preset.days, timezone ?? settings.data?.timezone) && clock === "09:00" ? "contained" : "outlined"} onClick={() => { setDate(reminderDate(preset.days, timezone ?? settings.data?.timezone)); setClock("09:00"); setOffset(""); }}>{preset.label}</Button>)}
+            </div>
             <TextField
               required
               type="date"
@@ -471,7 +523,7 @@ export function ReminderDialog({
               helperText={
                 timezone
                   ? "IANA timezone, such as Asia/Singapore"
-                  : "Using the browser default"
+                  : `Using ${timezoneLabel(settings.data?.timezone)}`
               }
             />
             {offsets && (
@@ -496,9 +548,9 @@ export function ReminderDialog({
           </div>
         </DialogContent>
         <DialogActions>
-          <Button onClick={close}>Cancel</Button>
-          <Button type="submit" variant="contained">
-            Set reminder
+          <Button onClick={close} disabled={pending}>Cancel</Button>
+          <Button type="submit" variant="contained" disabled={pending}>
+            {pending ? "Setting…" : "Set reminder"}
           </Button>
         </DialogActions>
       </form>
@@ -621,7 +673,7 @@ export function ItemDetail() {
                     })
                   }
                 >
-                  Acknowledge update
+                  Mark seen
                 </Button>
               )}
             </div>
@@ -727,6 +779,7 @@ export function ItemDetail() {
           close={() => setReminder(false)}
           apply={apply}
           error={mutation.error}
+          pending={mutation.isPending}
         />
       )}
     </>

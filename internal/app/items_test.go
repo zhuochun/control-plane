@@ -34,6 +34,8 @@ func TestItemsPageMatchesFullCollectionOrderAndFilters(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := 0; i < 12; i++ {
+		// Duplicate timestamps exercise the ID tie-breaker as well as direction.
+		a.Now = func() time.Time { return time.Date(2026, 9, 28, 12+i/2, 0, 0, 0, time.UTC) }
 		kind := "note"
 		if i%3 == 0 {
 			kind = "task"
@@ -47,10 +49,16 @@ func TestItemsPageMatchesFullCollectionOrderAndFilters(t *testing.T) {
 			t.Fatal(err)
 		}
 	}
-	for _, filter := range []ItemFilters{{View: "all"}, {View: "todo"}, {View: "attention"}, {View: "all", Kind: "task"}, {View: "all", Query: "Item 09"}, {View: "all", Query: "Page search interest"}, {View: "all", InterestID: interest.ID}} {
+	for _, filter := range []ItemFilters{{View: "all"}, {View: "todo"}, {View: "attention"}, {View: "all", Kind: "task"}, {View: "all", Query: "Item 09"}, {View: "all", Query: "Page search interest"}, {View: "all", InterestID: interest.ID}, {View: "all", Sort: "newest"}, {View: "all", Sort: "oldest"}, {View: "all", Sort: "title"}, {View: "todo", Sort: "newest"}, {View: "all", Query: "Item 0", Sort: "title"}} {
 		all, err := a.Items(ctx, filter)
 		if err != nil {
 			t.Fatal(err)
+		}
+		for index := 1; index < len(all); index++ {
+			before, after := all[index-1], all[index]
+			if filter.Sort == "newest" && before.ContentUpdatedAt.Before(after.ContentUpdatedAt) || filter.Sort == "oldest" && before.ContentUpdatedAt.After(after.ContentUpdatedAt) || filter.Sort == "title" && strings.Compare(strings.ToLower(before.Title), strings.ToLower(after.Title)) > 0 {
+				t.Fatalf("incorrect %s order: %s before %s", filter.Sort, before.Title, after.Title)
+			}
 		}
 		var got []string
 		cursor := ""
@@ -84,6 +92,9 @@ func TestItemsPageMatchesFullCollectionOrderAndFilters(t *testing.T) {
 	}
 	if _, _, err = a.ItemsPage(ctx, ItemFilters{View: "todo"}, "missing", 2); err == nil {
 		t.Fatal("accepted cursor outside collection")
+	}
+	if _, _, err = a.ItemsPage(ctx, ItemFilters{Sort: "unknown"}, "", 2); err == nil {
+		t.Fatal("unknown sort accepted")
 	}
 }
 
@@ -183,6 +194,63 @@ func TestItemContentAndLocalStateStayIndependent(t *testing.T) {
 	}
 	if persisted.TodoState != "done" || persisted.ContentVersion != 2 || persisted.StateVersion != 4 {
 		t.Fatalf("restart lost state: %+v", persisted)
+	}
+}
+
+func TestFollowThroughMarksViewedContentSeen(t *testing.T) {
+	ctx := context.Background()
+	s, err := store.Open(ctx, t.TempDir())
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = s.Close() })
+	a := New(s)
+	for _, action := range []Action{
+		{Type: "set_todo", State: "todo"},
+		{Type: "set_todo", State: "done"},
+		{Type: "set_reminder", Date: "2026-10-09", Timezone: "Asia/Singapore"},
+	} {
+		t.Run(action.Type+action.State, func(t *testing.T) {
+			input := PutItem{RequestID: t.Name() + "create", DedupeKey: t.Name(), Kind: "note", Title: "Viewed update", Summary: "Fixture evidence", Report: Report{SchemaVersion: 1, BodyMD: "First evidence"}}
+			raw, err := a.PutItem(ctx, "", input)
+			if err != nil {
+				t.Fatal(err)
+			}
+			var item Item
+			if err = json.Unmarshal(raw, &item); err != nil {
+				t.Fatal(err)
+			}
+			input.RequestID = t.Name() + "update"
+			input.ExpectedContentVersion = 1
+			input.Title = "Newer evidence"
+			if _, err = a.PutItem(ctx, item.ID, input); err != nil {
+				t.Fatal(err)
+			}
+			// Content can advance without changing state_version. Only mark the viewed version.
+			action.ContentVersion = 1
+			raw, err = a.ApplyItemAction(ctx, item.ID, ApplyItemAction{RequestID: t.Name() + "action", ExpectedStateVersion: 1, Action: action})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = json.Unmarshal(raw, &item); err != nil {
+				t.Fatal(err)
+			}
+			if item.AcknowledgedContentVersion != 1 || item.ContentVersion != 2 || item.StateVersion != 2 {
+				t.Fatalf("incorrect viewed version: %+v", item)
+			}
+			// Repeating the same follow-through can still mark a newly viewed update seen.
+			action.ContentVersion = 2
+			raw, err = a.ApplyItemAction(ctx, item.ID, ApplyItemAction{RequestID: t.Name() + "seen", ExpectedStateVersion: 2, Action: action})
+			if err != nil {
+				t.Fatal(err)
+			}
+			if err = json.Unmarshal(raw, &item); err != nil {
+				t.Fatal(err)
+			}
+			if item.AcknowledgedContentVersion != 2 || item.StateVersion != 3 {
+				t.Fatalf("no-op action missed seen state: %+v", item)
+			}
+		})
 	}
 }
 

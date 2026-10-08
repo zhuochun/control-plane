@@ -56,3 +56,11 @@ export function useSettings() {
     queryFn: () => api<Settings>("/settings"),
   });
 }
+
+// Add calendar days in the selected timezone, rather than 24-hour durations.
+export function reminderDate(days: number, timezone?: string): string {
+  const today = dateInputValue(new Date(), timezone);
+  const calendar = new Date(`${today}T12:00:00Z`);
+  calendar.setUTCDate(calendar.getUTCDate() + days);
+  return calendar.toISOString().slice(0, 10);
+}

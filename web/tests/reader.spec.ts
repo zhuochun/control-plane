@@ -1,5 +1,132 @@
 import { expect, test } from "./fixtures";
 
+test("adding a todo marks the viewed update seen and completing it clears attention", {
+  tag:["@case:reader-11", "@feature:items", "@concern:ui", "@concern:functional", "@profile:core"],
+}, async ({page, request}) => {
+  const title = `Follow through ${crypto.randomUUID()}`;
+  const response = await request.post("/api/v1/items", {data:{dedupe_key:title,kind:"note",title,summary:"Follow-through fixture",report:{schema_version:1,body_md:"Read and follow up."}}});
+  expect(response.ok()).toBeTruthy();
+  const item = await response.json();
+  await page.goto("/library?q="+encodeURIComponent(title));
+  const reader = page.getByRole("region", {name:"Item details"});
+  await expect(reader.getByRole("button", {name:"Mark seen",exact:true})).toBeVisible();
+  await reader.getByRole("button", {name:"Add Todo",exact:true}).click();
+  await expect(reader.getByRole("button", {name:"Mark Done",exact:true})).toBeVisible();
+  await expect(reader.getByRole("button", {name:"Mark seen",exact:true})).toHaveCount(0);
+  const todo = await (await request.get(`/api/v1/items/${item.id}`)).json();
+  expect(todo.todo_state).toBe("todo");
+  expect(todo.acknowledged_content_version).toBe(todo.content_version);
+  await page.goto("/?q="+encodeURIComponent(title));
+  await expect(page.locator(".queue-row")).toHaveCount(1);
+  await reader.getByRole("button", {name:"Mark Done",exact:true}).click();
+  await expect(page.locator(".queue-row")).toHaveCount(0);
+});
+
+test("each queue view has its own defaults, actions, and proposal scope", {
+  tag:["@case:reader-10", "@feature:items", "@feature:setup", "@concern:ui", "@concern:functional", "@profile:core"],
+}, async ({page, request}) => {
+  const marker = crypto.randomUUID();
+  const title = `Finish queue adaptation ${marker}`;
+  const created = await request.post("/api/v1/items", {data:{dedupe_key:marker, kind:"task", title, summary:"View-specific task fixture", report:{schema_version:1,body_md:"Complete this local task."}}});
+  expect(created.ok()).toBeTruthy();
+  const item = await created.json();
+  const proposed = await request.post("/api/v1/proposals", {data:{proposal_key:marker, target_type:"interest", operation:"create", rationale_md:"Queue scope fixture", payload:{title:`Queue scope ${marker}`, instructions_md:"Fixture only"}}});
+  expect(proposed.ok()).toBeTruthy();
+  const proposal = await proposed.json();
+  try {
+    await page.goto("/");
+    const sort = page.getByRole("combobox", {name:"Sort items"});
+    await expect(sort).toHaveValue("priority");
+    await expect(page.locator(".queue-review-link")).toBeVisible();
+    await sort.selectOption("oldest");
+    const navigation = page.getByRole("navigation", {name:"Main navigation"});
+    await navigation.getByRole("link", {name:/^Todos/}).click();
+    await expect(sort).toHaveValue("priority");
+    await expect(sort.locator("option:checked")).toHaveText("Due reminders first");
+    await expect(page.locator(".queue-review-link")).toHaveCount(0);
+    await expect(page.locator(".queue-group > summary").filter({hasText:"To do"})).toBeVisible();
+    await page.locator(".queue-row").filter({hasText:title}).click();
+    await page.getByRole("button", {name:`Mark done ${title}`,exact:true}).click();
+    await expect(page.locator(".queue-row").filter({hasText:title})).toHaveCount(0);
+    const done = await (await request.get(`/api/v1/items/${item.id}`)).json();
+    expect(done.todo_state).toBe("done");
+    expect(done.acknowledged_content_version).toBe(done.content_version);
+    await sort.selectOption("title");
+    await navigation.getByRole("link", {name:/^All items/}).click();
+    await expect(sort).toHaveValue("newest");
+    await expect(page.locator(".queue-group")).toHaveCount(0);
+    await expect(page.locator(".queue-review-link")).toHaveCount(0);
+    await expect(page.locator(".queue-row").filter({hasText:title})).toContainText("Task · Done");
+    await sort.selectOption("oldest");
+    await navigation.getByRole("link", {name:/^Attention/}).click();
+    await expect(sort).toHaveValue("oldest");
+    await expect(page.locator(".queue-review-link")).toBeVisible();
+    await navigation.getByRole("link", {name:/^Todos/}).click();
+    await expect(sort).toHaveValue("title");
+    await navigation.getByRole("link", {name:/^All items/}).click();
+    await expect(sort).toHaveValue("oldest");
+    await expect(page.locator(".queue-review-link")).toHaveCount(0);
+  } finally {
+    const rejected = await request.post(`/api/v1/proposals/${proposal.id}/resolve`, {data:{resolution:"rejected"}});
+    expect(rejected.ok()).toBeTruthy();
+  }
+});
+
+test("queue sorts the collection and offers acknowledgement and reminder presets", {
+  tag: ["@case:reader-09", "@feature:items", "@concern:ui", "@concern:functional", "@profile:core"],
+}, async ({ page, request }) => {
+  const prefix = `Queue actions ${crypto.randomUUID()}`;
+  const ids: string[] = [];
+  for (const suffix of ["Zulu", "Alpha", "Mike"]) {
+    const response = await request.post("/api/v1/items", {data:{dedupe_key:`${prefix} ${suffix}`, title:`${prefix} ${suffix}`, summary:"Queue fixture", kind:"note", report:{schema_version:1, body_md:"Fixture evidence"}}});
+    expect(response.ok(), await response.text()).toBeTruthy();
+    ids.push((await response.json()).id);
+  }
+  await page.goto("/library?q=" + encodeURIComponent(prefix));
+  await page.getByRole("combobox", {name:"Sort items"}).selectOption("title");
+  await expect(page.locator(".queue-row strong")).toHaveText([`${prefix} Alpha`, `${prefix} Mike`, `${prefix} Zulu`]);
+  // The HTTP order is global and continues consistently across pages.
+  let cursor: string | undefined;
+  const titles: string[] = [];
+  do {
+    const response = await request.get("/api/v1/items", {params:{q:prefix, sort:"title", limit:"1", ...(cursor ? {cursor} : {})}});
+    expect(response.ok()).toBeTruthy();
+    const result = await response.json();
+    titles.push(...result.items.map((item:{title:string}) => item.title));
+    cursor = result.next_cursor;
+  } while(cursor);
+  expect(titles).toEqual([`${prefix} Alpha`, `${prefix} Mike`, `${prefix} Zulu`]);
+  expect((await request.get("/api/v1/items?sort=invalid")).status()).toBe(422);
+  const title = `${prefix} Zulu`;
+  await page.locator(".queue-row").filter({hasText:title}).click();
+  await page.getByRole("button", {name:`Remind me about ${title}`,exact:true}).click();
+  const dialog = page.getByRole("dialog");
+  const tomorrow = await dialog.getByLabel("Date").inputValue();
+  const expectedWeek = new Date(`${tomorrow}T12:00:00Z`);
+  expectedWeek.setUTCDate(expectedWeek.getUTCDate() + 6);
+  await dialog.getByRole("button", {name:"Next week",exact:true}).click();
+  await expect(dialog.getByLabel("Date")).toHaveValue(expectedWeek.toISOString().slice(0,10));
+  await expect(dialog.locator('input[type="time"]')).toHaveValue("09:00");
+  await dialog.getByRole("button", {name:"Set reminder",exact:true}).click();
+  await expect(dialog).toHaveCount(0);
+  const reminded = await (await request.get(`/api/v1/items/${ids[0]}`)).json();
+  expect(reminded.remind_at).toBeTruthy();
+  expect(reminded.acknowledged_content_version).toBe(reminded.content_version);
+  await expect(page.getByRole("button", {name:`Mark seen ${title}`,exact:true})).toHaveCount(0);
+  await page.getByRole("button", {name:`Actions for ${prefix} Alpha`,exact:true}).click();
+  await page.getByRole("menuitem", {name:"Mark seen",exact:true}).click();
+  await expect.poll(async () => (await (await request.get(`/api/v1/items/${ids[1]}`)).json()).acknowledged_content_version).toBe(1);
+  await page.goto("/?q=" + encodeURIComponent(prefix));
+  await expect(page.locator(".queue-group > summary")).toHaveCount(1);
+  await expect(page.locator(".queue-group > summary")).toContainText("New evidence");
+  await expect(page.locator(".queue-row strong")).toHaveText([`${prefix} Mike`]);
+  await expect.poll(() => page.locator(".workspace-list").evaluate(element => element.scrollWidth <= element.clientWidth + 1)).toBe(true);
+  await page.locator(".queue-group > summary").click();
+  await expect(page.locator(".queue-row")).toBeHidden();
+  await page.locator(".queue-group > summary").click();
+  await expect(page.locator(".queue-row")).toBeVisible();
+});
+
 test(
   "inbox capture accepts one piece of information and offers it to the next run",
   {
@@ -286,10 +413,10 @@ test(
     const note = page.getByRole("textbox", { name: "Your note", exact: true });
     await note.fill("Keep this follow-up");
     await page
-      .getByRole("button", { name: "Acknowledge", exact: true })
+      .getByRole("button", { name: "Mark seen", exact: true })
       .click();
     await expect(
-      page.getByRole("button", { name: new RegExp(title) }),
+      page.locator(".queue-row").filter({hasText:title}),
     ).toHaveCount(0);
     await expect(
       page.getByRole("heading", { name: "Original report" }),
@@ -357,7 +484,7 @@ test(
     );
     await page.goto("/library?q=" + marker);
     await page
-      .getByRole("button", { name: new RegExp("First " + marker) })
+      .locator(".queue-row").filter({hasText:"First " + marker})
       .click();
     const note = page.getByRole("textbox", { name: "Your note", exact: true });
     await note.fill("Keep this draft while I compare findings.");
@@ -379,12 +506,12 @@ test(
       page.getByRole("link", { name: "Open evidence" }),
     ).toHaveAttribute("href", "https://example.com/evidence");
     await page
-      .getByRole("button", { name: new RegExp("Second " + marker) })
+      .locator(".queue-row").filter({hasText:"Second " + marker})
       .click();
     await expect(note).toHaveValue("");
     await note.fill("Second draft");
     await page
-      .getByRole("button", { name: new RegExp("First " + marker) })
+      .locator(".queue-row").filter({hasText:"First " + marker})
       .click();
     await expect(note).toHaveValue("Keep this draft while I compare findings.");
     await page.getByRole("button", { name: "Save note", exact: true }).click();
@@ -394,7 +521,7 @@ test(
     ).toBe("Keep this draft while I compare findings.");
     await page.reload();
     await page
-      .getByRole("button", { name: new RegExp("First " + marker) })
+      .locator(".queue-row").filter({hasText:"First " + marker})
       .click();
     await expect(note).toHaveValue("Keep this draft while I compare findings.");
   },
@@ -490,7 +617,7 @@ test(
     expect(response.ok()).toBeTruthy();
     await page.setViewportSize({ width: 390, height: 844 });
     await page.goto("/library?q=" + encodeURIComponent(title));
-    await page.getByRole("button", { name: new RegExp(title) }).click();
+    await page.locator(".queue-row").filter({hasText:title}).click();
     await expect(page.getByRole("heading", { name: "Evidence" })).toBeVisible();
     const note = page.getByRole("textbox", { name: "Your note", exact: true });
     await expect(note).toBeInViewport();

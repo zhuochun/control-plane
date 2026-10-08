@@ -90,6 +90,20 @@ func (a *App) ApplyItemAction(ctx context.Context, id string, input ApplyItemAct
 		default:
 			return nil, Invalid("unknown item action")
 		}
+		if input.Action.Type == "set_reminder" || input.Action.Type == "set_todo" && input.Action.State != "none" {
+			// Portal callers name the version they saw; older clients use the current version.
+			seenVersion := input.Action.ContentVersion
+			if seenVersion == 0 {
+				seenVersion = item.ContentVersion
+			}
+			if seenVersion < 1 || seenVersion > item.ContentVersion {
+				return nil, Invalid("content_version must name a current or earlier content version")
+			}
+			if seenVersion > item.AcknowledgedContentVersion {
+				item.AcknowledgedContentVersion = seenVersion
+				changed = true
+			}
+		}
 		if !changed {
 			return completeItem(ctx, tx, item)
 		}
