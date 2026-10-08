@@ -257,7 +257,7 @@ test(
     await page.getByLabel("Date").fill("2030-09-16");
     await page.getByRole("button", { name: "Set reminder" }).click();
     await expect(
-      page.getByRole("button", { name: "Clear reminder" }),
+      page.getByRole("button", { name: "Reminder options" }),
     ).toBeVisible();
     await expect(page.locator(".reader-reminder")).toBeVisible();
 
@@ -272,7 +272,7 @@ test(
       page.getByRole("button", { name: "Reopen Todo" }),
     ).toBeVisible();
     await expect(
-      page.getByRole("button", { name: "Clear reminder" }),
+      page.getByRole("button", { name: "Reminder options" }),
     ).toHaveCount(0);
   },
 );

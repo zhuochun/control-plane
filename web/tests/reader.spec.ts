@@ -1,5 +1,131 @@
 import { expect, test } from "./fixtures";
 
+test(
+  "reader groups follow-up with notes and keeps relevance and source rows visible",
+  {
+    tag: [
+      "@case:reader-12",
+      "@feature:items",
+      "@concern:ui",
+      "@concern:functional",
+      "@profile:core",
+    ],
+  },
+  async ({ page, request }) => {
+    const marker = crypto.randomUUID();
+    const createdInterest = await request.post("/api/v1/interests", {
+      data: { title: `Reader context ${marker}`, instructions_md: "Fixture" },
+    });
+    expect(createdInterest.ok()).toBeTruthy();
+    const interest = await createdInterest.json();
+    const title = `Clear reader ${marker}`;
+    const response = await request.post("/api/v1/items", {
+      data: {
+        dedupe_key: marker,
+        kind: "report",
+        title,
+        summary: "A clear opening finding.",
+        interests: [
+          {
+            id: interest.id,
+            reason: "An owner is needed before expanding the pilot.",
+          },
+        ],
+        sources: [
+          {
+            id: "first",
+            url: "https://example.com/review",
+            label: "Launch review",
+            observed_at: "2026-10-08T01:00:00Z",
+          },
+          {
+            id: "second",
+            url: "https://example.com/call",
+            label: "Customer call",
+            observed_at: "2026-10-08T02:00:00Z",
+          },
+        ],
+        report: {
+          schema_version: 1,
+          body_md:
+            "**Recommendation:** Confirm the owner.\n\n## Evidence\n\nBoth sources agree on scope.",
+        },
+      },
+    });
+    expect(response.ok()).toBeTruthy();
+    const item = await response.json();
+    await page.goto("/library?q=" + encodeURIComponent(title));
+    const reader = page.getByRole("region", { name: "Item details" });
+    await expect(reader.locator(".reader-header button")).toHaveCount(0);
+    await expect(
+      reader.getByRole("region", { name: "Why this matters" }),
+    ).toContainText("An owner is needed");
+    await expect(reader.locator(".reader-sources > a")).toHaveCount(2);
+    await expect(
+      reader.getByRole("link", { name: /Launch review/ }),
+    ).toBeVisible();
+    await expect(
+      reader.getByRole("link", { name: /Customer call/ }),
+    ).toBeVisible();
+    const composer = reader.locator(".reader-note");
+    const note = composer.getByRole("textbox", { name: "Your note" });
+    await note.fill("Keep this draft separate from actions");
+    await composer
+      .getByRole("button", { name: "Add Todo", exact: true })
+      .click();
+    await expect(
+      composer.getByRole("button", { name: "Mark Done", exact: true }),
+    ).toBeVisible();
+    await expect(note).toHaveValue("Keep this draft separate from actions");
+    expect(
+      (await (await request.get(`/api/v1/items/${item.id}`)).json()).user_note,
+    ).toBe("");
+    await composer.getByRole("button", { name: "Remind", exact: true }).click();
+    await page
+      .getByRole("dialog")
+      .getByRole("button", { name: "Set reminder", exact: true })
+      .click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    await composer.getByRole("button", { name: "Reminder options" }).click();
+    await page
+      .getByRole("menuitem", { name: "Clear reminder", exact: true })
+      .click();
+    await expect(composer.locator(".reader-reminder")).toHaveCount(0);
+    await expect(note).toHaveValue("Keep this draft separate from actions");
+    await composer
+      .getByRole("button", { name: "Save note", exact: true })
+      .click();
+    await expect(composer.getByRole("status")).toHaveText("Note saved.");
+
+    // New evidence arriving behind an open reminder must remain unseen.
+    await page.goto("/?q=" + encodeURIComponent(title));
+    await page.getByRole("button", { name: `Remind me about ${title}`, exact: true }).click();
+    const beforeUpdate = await (await request.get(`/api/v1/items/${item.id}`)).json();
+    const refreshedQueue = page.waitForResponse(async (response) => {
+      if (!response.url().includes("/api/v1/items?") || !response.ok()) return false;
+      const data = await response.json();
+      return data.items.some((entry: { id: string; content_version: number }) =>
+        entry.id === item.id && entry.content_version > beforeUpdate.content_version);
+    });
+    const updated = await request.patch(`/api/v1/items/${item.id}/work`, {
+      data: {
+        expected_content_version: beforeUpdate.content_version,
+        report: { schema_version: 1, body_md: "A newly discovered dependency needs review." },
+      },
+    });
+    expect(updated.ok(), await updated.text()).toBeTruthy();
+    await refreshedQueue;
+    // The response has arrived; let React commit the updated row before submitting.
+    await expect(page.getByRole("button", { name: `Mark seen ${title}`, exact: true, includeHidden: true })).toHaveCount(1);
+    await page.getByRole("dialog").getByRole("button", { name: "Set reminder", exact: true }).click();
+    await expect(page.getByRole("dialog")).toHaveCount(0);
+    const afterReminder = await (await request.get(`/api/v1/items/${item.id}`)).json();
+    expect(afterReminder.remind_at).toBeTruthy();
+    expect(afterReminder.content_version).toBeGreaterThan(beforeUpdate.content_version);
+    expect(afterReminder.acknowledged_content_version).toBe(beforeUpdate.content_version);
+  },
+);
+
 test("adding a todo marks the viewed update seen and completing it clears attention", {
   tag:["@case:reader-11", "@feature:items", "@concern:ui", "@concern:functional", "@profile:core"],
 }, async ({page, request}) => {

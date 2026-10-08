@@ -1,9 +1,20 @@
 import { useRef, useState } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, IconButton, TextField } from "@mui/material";
+import {
+  Alert,
+  Button,
+  IconButton,
+  Menu,
+  MenuItem,
+  TextField,
+} from "@mui/material";
 import ArrowBackOutlined from "@mui/icons-material/ArrowBackOutlined";
 import DescriptionOutlined from "@mui/icons-material/DescriptionOutlined";
 import OpenInNewOutlined from "@mui/icons-material/OpenInNewOutlined";
+import Check from "@mui/icons-material/Check";
+import Schedule from "@mui/icons-material/Schedule";
+import VisibilityOutlined from "@mui/icons-material/VisibilityOutlined";
+import ExpandMore from "@mui/icons-material/ExpandMore";
 import { NavLink } from "react-router";
 import { AnswerNotes, ReportContent } from "./report-content";
 import { api } from "./api";
@@ -45,6 +56,7 @@ export function ItemReader({
     queryFn: () => api<Item>("/items/" + itemId),
   });
   const [reminder, setReminder] = useState(false);
+  const [reminderMenu, setReminderMenu] = useState<HTMLElement | null>(null);
   const noteRequest = useRef<{ signature: string; id: string } | null>(null);
   const { apply, mutation } = useItemAction(itemId, () => setReminder(false));
   const saveNote = useMutation({
@@ -99,77 +111,34 @@ export function ItemReader({
         {item && (
           <>
             <header className="reader-header">
-              <h2>{item.title}</h2>
-              <div className="reader-actions">
-                {item.acknowledged_content_version < item.content_version && (
-                  <Button
-                    variant="contained"
-                    disabled={pending}
-                    onClick={() =>
-                      apply(item, {
-                        type: "acknowledge",
-                        content_version: item.content_version,
-                      })
-                    }
-                  >
-                    Mark seen
-                  </Button>
-                )}
-                <Button
-                  variant="outlined"
-                  disabled={pending}
-                  onClick={() =>
-                    apply(item, {
-                      type: "set_todo",
-                      state: item.todo_state === "todo" ? "done" : "todo",
-                    })
-                  }
-                >
-                  {item.todo_state === "todo"
-                    ? "Mark Done"
-                    : item.todo_state === "done"
-                      ? "Reopen Todo"
-                      : "Add Todo"}
-                </Button>
-                <Button
-                  variant="outlined"
-                  disabled={pending}
-                  onClick={() => setReminder(true)}
-                >
-                  {item.remind_at ? "Change reminder" : "Remind"}
-                </Button>
-              </div>
-            </header>
-            <div className="reader-meta">
-              {attentionReasons(item).map((reason) => (
-                <span className="reader-reason" key={reason}>
-                  {reason}
+              <div className="reader-meta">
+                <div className="reader-context">
+                  <span className="reader-kind">{item.kind}</span>
+                  {item.interests?.map((reason) => {
+                    const interest = interests.find(
+                      (entry) => entry.id === reason.id,
+                    );
+                    return (
+                      <NavLink
+                        key={reason.id}
+                        to={"/interests#interest-" + (interest?.slug ?? "")}
+                      >
+                        {interest?.title ?? reason.id}
+                      </NavLink>
+                    );
+                  })}
+                </div>
+                <span>
+                  Updated{" "}
+                  {formatDateTime(
+                    item.content_updated_at,
+                    settings.data?.timezone,
+                  )}
                 </span>
-              ))}
-              <span>
-                Updated{" "}
-                {formatDateTime(
-                  item.content_updated_at,
-                  settings.data?.timezone,
-                )}
-              </span>
-            </div>
-            <p className="reader-summary">{item.summary}</p>
-            {item.remind_at && (
-              <div className="reader-reminder">
-                Reminder:{" "}
-                {formatDateTime(item.remind_at, settings.data?.timezone)}
-                <Button
-                  disabled={pending}
-                  onClick={() => apply(item, { type: "clear_reminder" })}
-                >
-                  Clear reminder
-                </Button>
               </div>
-            )}
-            {mutation.isError && (
-              <Alert severity="error">{mutation.error.message}</Alert>
-            )}
+              <h2>{item.title}</h2>
+              <p className="reader-summary">{item.summary}</p>
+            </header>
             {metric && (
               <>
                 <div className="reader-metrics">
@@ -194,62 +163,82 @@ export function ItemReader({
                 <MetricChart item={item} />
               </>
             )}
-            <article className="reader-markdown">
+            <article
+              className="reader-markdown"
+              data-report-schema={item.report.schema_version}
+            >
               <ReportContent item={item} />
             </article>
-            {item.report.schema_version === 1 && !!item.report.actions?.length && (
-              <div
-                className="reader-report-actions"
-                aria-label="Report actions"
-              >
-                {item.report.actions.map((action) => {
-                  const source = sources.find(
-                    (entry) => entry.id === action.source_ref,
-                  );
-                  return action.type === "open_link" ? (
-                    source?.url ? (
+            {item.report.schema_version === 1 &&
+              !!item.report.actions?.length && (
+                <div
+                  className="reader-report-actions"
+                  aria-label="Report actions"
+                >
+                  {item.report.actions.map((action) => {
+                    const source = sources.find(
+                      (entry) => entry.id === action.source_ref,
+                    );
+                    return action.type === "open_link" ? (
+                      source?.url ? (
+                        <Button
+                          key={action.id}
+                          component="a"
+                          href={source.url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          endIcon={<OpenInNewOutlined />}
+                        >
+                          {action.label}
+                        </Button>
+                      ) : null
+                    ) : (
                       <Button
                         key={action.id}
-                        component="a"
-                        href={source.url}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        endIcon={<OpenInNewOutlined />}
+                        disabled={pending}
+                        variant="outlined"
+                        onClick={() =>
+                          action.type === "set_reminder"
+                            ? setReminder(true)
+                            : apply(
+                                item,
+                                action.type === "acknowledge"
+                                  ? {
+                                      type: "acknowledge",
+                                      content_version: item.content_version,
+                                    }
+                                  : {
+                                      type: action.type,
+                                      ...(action.state
+                                        ? { state: action.state }
+                                        : {}),
+                                    },
+                              )
+                        }
                       >
                         {action.label}
                       </Button>
-                    ) : null
-                  ) : (
-                    <Button
-                      key={action.id}
-                      disabled={pending}
-                      variant="outlined"
-                      onClick={() =>
-                        action.type === "set_reminder"
-                          ? setReminder(true)
-                          : apply(
-                              item,
-                              action.type === "acknowledge"
-                                ? {
-                                    type: "acknowledge",
-                                    content_version: item.content_version,
-                                  }
-                                : {
-                                    type: action.type,
-                                    ...(action.state
-                                      ? { state: action.state }
-                                      : {}),
-                                  },
-                            )
-                      }
-                    >
-                      {action.label}
-                    </Button>
-                  );
-                })}
-              </div>
-            )}
+                    );
+                  })}
+                </div>
+              )}
             <AnswerNotes item={item} />
+            {!!item.interests?.length && (
+              <section
+                className="reader-relevance"
+                aria-label="Why this matters"
+              >
+                <h3>Why this matters</h3>
+                <div>
+                  {item.interests.map((reason) => (
+                    <p key={reason.id}>
+                      {reason.reason ||
+                        "Historical assignment; original explanation unavailable."}
+                    </p>
+                  ))}
+                </div>
+              </section>
+            )}
             <section className="reader-sources">
               <h3>Sources</h3>
               {sources.length ? (
@@ -302,28 +291,6 @@ export function ItemReader({
                 </p>
               )}
             </section>
-            {!!item.interests?.length && (
-              <section className="reader-relevance">
-                <h3>Why this matters</h3>
-                {item.interests.map((reason) => {
-                  const interest = interests.find(
-                    (entry) => entry.id === reason.id,
-                  );
-                  return (
-                    <p key={reason.id}>
-                      <NavLink
-                        to={"/interests#interest-" + (interest?.slug ?? "")}
-                      >
-                        {interest?.title ?? reason.id}
-                      </NavLink>
-                      :{" "}
-                      {reason.reason ||
-                        "Historical assignment; original explanation unavailable."}
-                    </p>
-                  );
-                })}
-              </section>
-            )}
           </>
         )}
       </div>
@@ -335,7 +302,17 @@ export function ItemReader({
             if (note !== null) saveNote.mutate({ item, value: note });
           }}
         >
-          <label htmlFor={"note-" + itemId}>Your note</label>
+          <div className="reader-note-heading">
+            <label htmlFor={"note-" + itemId}>Your note</label>
+            <Button
+              type="submit"
+              size="small"
+              variant="outlined"
+              disabled={note === null || pending}
+            >
+              {saveNote.isPending ? "Saving…" : "Save note"}
+            </Button>
+          </div>
           <div className="reader-note-input">
             <TextField
               id={"note-" + itemId}
@@ -350,14 +327,100 @@ export function ItemReader({
                 if (!saveNote.isPending) saveNote.reset();
               }}
             />
-            <Button
-              type="submit"
-              variant="contained"
-              disabled={note === null || pending}
-            >
-              {saveNote.isPending ? "Saving…" : "Save note"}
-            </Button>
           </div>
+          <div className="reader-note-footer">
+            {item.remind_at ? (
+              <div
+                className={
+                  "reader-reminder" +
+                  (new Date(item.remind_at) <= new Date() ? " is-due" : "")
+                }
+              >
+                <Schedule fontSize="small" />
+                <span>
+                  {new Date(item.remind_at) <= new Date()
+                    ? "Reminder due: "
+                    : "Reminder: "}
+                  {formatDateTime(item.remind_at, settings.data?.timezone)}
+                </span>
+              </div>
+            ) : (
+              <span className="reader-followup-state">
+                {item.todo_state === "todo"
+                  ? "Todo"
+                  : item.todo_state === "done"
+                    ? "Done"
+                    : ""}
+              </span>
+            )}
+            <div className="reader-actions" aria-label="Item follow-up">
+              <Button
+                type="button"
+                variant="contained"
+                startIcon={<Check />}
+                disabled={pending}
+                onClick={() =>
+                  apply(item, {
+                    type: "set_todo",
+                    state: item.todo_state === "todo" ? "done" : "todo",
+                  })
+                }
+              >
+                {item.todo_state === "todo"
+                  ? "Mark Done"
+                  : item.todo_state === "done"
+                    ? "Reopen Todo"
+                    : "Add Todo"}
+              </Button>
+              <div className="reader-reminder-control">
+                <Button
+                  type="button"
+                  variant="outlined"
+                  startIcon={<Schedule />}
+                  disabled={pending}
+                  onClick={() => setReminder(true)}
+                >
+                  {item.remind_at ? "Change reminder" : "Remind"}
+                </Button>
+                {item.remind_at && (
+                  <IconButton
+                    type="button"
+                    size="small"
+                    aria-label="Reminder options"
+                    aria-haspopup="menu"
+                    aria-expanded={!!reminderMenu}
+                    disabled={pending}
+                    onClick={(event) => setReminderMenu(event.currentTarget)}
+                  >
+                    <ExpandMore fontSize="small" />
+                  </IconButton>
+                )}
+              </div>
+              {item.acknowledged_content_version < item.content_version ? (
+                <Button
+                  type="button"
+                  variant="text"
+                  startIcon={<VisibilityOutlined />}
+                  disabled={pending}
+                  onClick={() =>
+                    apply(item, {
+                      type: "acknowledge",
+                      content_version: item.content_version,
+                    })
+                  }
+                >
+                  Mark seen
+                </Button>
+              ) : (
+                <span className="reader-seen">
+                  <VisibilityOutlined fontSize="small" /> Seen
+                </span>
+              )}
+            </div>
+          </div>
+          {mutation.isError && (
+            <Alert severity="error">{mutation.error.message}</Alert>
+          )}
           {saveNote.isError && (
             <Alert severity="error">
               {saveNote.error.message} Your draft is kept; retry after the item
@@ -369,8 +432,32 @@ export function ItemReader({
           )}
         </form>
       )}
-      {reminder && (
+      <Menu
+        anchorEl={reminderMenu}
+        open={!!reminderMenu}
+        onClose={() => setReminderMenu(null)}
+      >
+        <MenuItem
+          onClick={() => {
+            setReminderMenu(null);
+            setReminder(true);
+          }}
+        >
+          Change reminder
+        </MenuItem>
+        <MenuItem
+          disabled={pending}
+          onClick={() => {
+            setReminderMenu(null);
+            if (item) apply(item, { type: "clear_reminder" });
+          }}
+        >
+          Clear reminder
+        </MenuItem>
+      </Menu>
+      {reminder && item && (
         <ReminderDialog
+          contentVersion={item.content_version}
           close={() => setReminder(false)}
           apply={(action) => item && apply(item, action)}
           error={mutation.error}

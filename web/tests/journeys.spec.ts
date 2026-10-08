@@ -327,9 +327,11 @@ test(
     await page
       .getByRole("button", { name: "Set reminder", exact: true })
       .click();
+    await page.getByRole("button", { name: "Reminder options" }).click();
     await expect(
-      page.getByRole("button", { name: "Clear reminder", exact: true }),
+      page.getByRole("menuitem", { name: "Clear reminder", exact: true }),
     ).toBeVisible();
+    await page.keyboard.press("Escape");
     const before = await cli(server, ["item", "get", item.id]);
     report.check(
       "I2",

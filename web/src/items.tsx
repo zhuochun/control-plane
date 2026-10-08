@@ -448,16 +448,20 @@ function ProposalDetails({ payload }: { payload?: object }) {
 }
 
 export function ReminderDialog({
+  contentVersion,
   close,
   apply,
   error,
   pending = false,
 }: {
+  contentVersion: number;
   close: () => void;
   apply: (action: object) => void;
   error: Error | null;
   pending?: boolean;
 }) {
+  // A modal can outlive the viewed report while its parent refetches newer content.
+  const [viewedContentVersion] = useState(contentVersion);
   const settings = useSettings();
   const tomorrow = reminderDate(1, settings.data?.timezone);
   const [date, setDate] = useState(tomorrow);
@@ -476,6 +480,7 @@ export function ReminderDialog({
           if (pending) return;
           apply({
             type: "set_reminder",
+            content_version: viewedContentVersion,
             date,
             time: clock,
             timezone: effectiveTimezone(timezone ?? settings.data?.timezone),
@@ -486,7 +491,7 @@ export function ReminderDialog({
         <DialogTitle id="reminder-title">Remind me</DialogTitle>
         <DialogContent>
           <div className="editor-fields">
-            <p>Choose a day at 9 AM, or set a custom time. A reminder keeps existing todos and new evidence in Attention.</p>
+            <p>Choose a day at 9 AM, or set a custom time. Setting a reminder marks the viewed update seen and resurfaces this item at that time. Existing todos and newer unseen updates stay in Attention.</p>
             <div className="reminder-presets">
               {[{label:"Tomorrow", days:1}, {label:"Next week", days:7}].map(preset => <Button key={preset.label} disabled={pending} variant={date === reminderDate(preset.days, timezone ?? settings.data?.timezone) && clock === "09:00" ? "contained" : "outlined"} onClick={() => { setDate(reminderDate(preset.days, timezone ?? settings.data?.timezone)); setClock("09:00"); setOffset(""); }}>{preset.label}</Button>)}
             </div>
@@ -776,6 +781,7 @@ export function ItemDetail() {
       )}
       {reminder && (
         <ReminderDialog
+          contentVersion={item.content_version}
           close={() => setReminder(false)}
           apply={apply}
           error={mutation.error}

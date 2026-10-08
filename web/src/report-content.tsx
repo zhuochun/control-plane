@@ -646,6 +646,7 @@ function ReportActions({ item, ids }: { item: Item; ids: string[] }) {
       )}
       {reminder && (
         <ReminderDialog
+          contentVersion={item.content_version}
           close={() => setReminder(false)}
           apply={(action) => apply(item, action)}
           error={mutation.error}

@@ -418,6 +418,6 @@ function QueueActions({ item, mode, selected }: { item: Item; mode:WorkspaceMode
       <MenuItem onClick={remind}><Schedule fontSize="small" /> {item.remind_at ? "Change reminder" : "Remind later"}</MenuItem>
     </Menu>
     {mutation.isError && !reminder && <Alert severity="error">{mutation.error.message}</Alert>}
-    {reminder && <ReminderDialog close={() => setReminder(false)} apply={action => apply(item, action)} error={mutation.error} pending={mutation.isPending} />}
+    {reminder && <ReminderDialog contentVersion={item.content_version} close={() => setReminder(false)} apply={action => apply(item, action)} error={mutation.error} pending={mutation.isPending} />}
   </div>;
 }
