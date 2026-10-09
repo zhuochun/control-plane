@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/url"
 
@@ -44,7 +45,7 @@ func itemCommand(send request) *cobra.Command {
 			args = cobra.ExactArgs(1)
 		}
 		command := &cobra.Command{Use: use, Args: args, RunE: func(cmd *cobra.Command, args []string) error {
-			body, err := commandFile(cmd, file)
+			body, err := ownerItemCommandFile(cmd, file)
 			if err != nil {
 				return err
 			}
@@ -55,6 +56,7 @@ func itemCommand(send request) *cobra.Command {
 			return send(cmd, method, target, body)
 		}}
 		command.Flags().StringVar(&file, "file", "", "JSON command file, or - for stdin")
+		command.Flags().String("actor", "", "Mutation actor: user or agent (omitted retains legacy user attribution)")
 		_ = command.MarkFlagRequired("file")
 		root.AddCommand(command)
 	}
@@ -107,7 +109,7 @@ func itemCommand(send request) *cobra.Command {
 		operation := operation
 		var file string
 		command := &cobra.Command{Use: operation + " <id>", Args: cobra.ExactArgs(1), RunE: func(cmd *cobra.Command, args []string) error {
-			body, err := commandFile(cmd, file)
+			body, err := ownerItemCommandFile(cmd, file)
 			if err != nil {
 				return err
 			}
@@ -118,8 +120,29 @@ func itemCommand(send request) *cobra.Command {
 			return send(cmd, method, "/items/"+url.PathEscape(args[0])+suffix, body)
 		}}
 		command.Flags().StringVar(&file, "file", "", "JSON command file, or - for stdin")
+		command.Flags().String("actor", "", "Mutation actor: user or agent (agents must identify themselves)")
 		_ = command.MarkFlagRequired("file")
 		root.AddCommand(command)
 	}
 	return root
+}
+
+func ownerItemCommandFile(cmd *cobra.Command, file string) (json.RawMessage, error) {
+	body, err := commandFile(cmd, file)
+	if err != nil || !cmd.Flags().Changed("actor") {
+		return body, err
+	}
+	actor, err := cmd.Flags().GetString("actor")
+	if err != nil {
+		return nil, err
+	}
+	if actor != "user" && actor != "agent" {
+		return nil, fmt.Errorf("actor must be user or agent")
+	}
+	var fields map[string]json.RawMessage
+	if err = json.Unmarshal(body, &fields); err != nil || fields == nil {
+		return nil, fmt.Errorf("owner item command must be a JSON object")
+	}
+	fields["actor"], _ = json.Marshal(actor)
+	return json.Marshal(fields)
 }

@@ -30,6 +30,7 @@ function InputRecord({ input, timezone }: { input: UserInput; timezone?: string 
     <article className="reader-input-record">
       <strong>{input.kind === "inbox" ? "Original submission" : "Your note"}</strong>
       <span> · {formatDateTime(input.submitted_at, timezone)} · {input.status}</span>
+      {input.original?.submitted_by === "agent" && <span> · Submitted by agent</span>}
       <div className="reader-input-text">{input.text}</div>
       {last && (
         <div>

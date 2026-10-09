@@ -49,12 +49,10 @@ func (a *App) mutate(ctx context.Context, requestID, operation string, request a
 		// needs replayable retries.
 		requestID = uuid.NewString()
 	}
-	body, err := json.Marshal(request)
+	hash, err := commandHash(operation, request)
 	if err != nil {
 		return nil, err
 	}
-	sum := sha256.Sum256(append([]byte(operation+"\n"), body...))
-	hash := hex.EncodeToString(sum[:])
 	tx, err := a.Store.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
@@ -65,6 +63,19 @@ func (a *App) mutate(ctx context.Context, requestID, operation string, request a
 	var response json.RawMessage
 	err = tx.QueryRowContext(ctx, "SELECT request_hash, response FROM command_receipts WHERE request_id = ?", requestID).Scan(&existingHash, &storedResponse)
 	if err == nil {
+		if hash != existingHash {
+			if attributed, ok := request.(attributedCommand); ok {
+				if legacy, present := attributed.withoutActor(); present {
+					legacyHash, hashErr := commandHash(operation, legacy)
+					if hashErr != nil {
+						return nil, hashErr
+					}
+					if legacyHash == existingHash {
+						return json.RawMessage(storedResponse), nil
+					}
+				}
+			}
+		}
 		if hash != existingHash {
 			return nil, &Error{Status: 409, Code: "idempotency_conflict", Message: "request_id was already used for a different command"}
 		}
@@ -88,6 +99,15 @@ func (a *App) mutate(ctx context.Context, requestID, operation string, request a
 		return nil, err
 	}
 	return response, nil
+}
+
+func commandHash(operation string, request any) (string, error) {
+	body, err := json.Marshal(request)
+	if err != nil {
+		return "", err
+	}
+	sum := sha256.Sum256(append([]byte(operation+"\n"), body...))
+	return hex.EncodeToString(sum[:]), nil
 }
 
 func (a *App) event(ctx context.Context, tx *sql.Tx, actor, entityType, entityID, change string, payload any) error {

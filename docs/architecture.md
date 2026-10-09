@@ -44,6 +44,23 @@ Item-local delegations and existing-Item work updates are owned by
 describes external-agent continuation and bounded recovery. aicp stores handoffs;
 the primary agent launches and communicates with executors outside this runtime.
 
+`update_item_work` also patches an existing Item's title and summary without a
+Run. Omitted fields retain their values, and title/summary must remain nonempty.
+An optional `reason` records the request basis in new version snapshots and events.
+Edits preserve provenance, evidence and user state; they neither acknowledge the
+Item nor process pending input. Agent work is credited to `agent`, independently
+of Item origin. Source publication still uses the Run-owned operation.
+
+Owner-facing Item create/update, note and action commands accept `actor` as
+`user` or `agent`, defaulting to `user` only for compatibility with older clients.
+The portal sends `user`; MCP actions send `agent`. CLI callers can pass
+`--actor agent` to `item create`, `update`, `note` or `action`, or include `actor`
+in the command JSON. Agents put operational progress in work report/context;
+the note endpoint remains owner input, including agent-transcribed instructions.
+New input originals retain `submitted_by`; ambiguous historical records are not
+relabeled. Required change pages retain note/state mutations and user-origin
+captures regardless of actor. Actor and reason describe provenance, not authority.
+
 Structured report blocks, immutable review formats, image evidence, and saved
 human answers are owned by `internal/app/review_*.go`. The
 [review format contract](specs/20261004-item-review-formats-and-user-answers-spec.md)

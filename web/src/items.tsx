@@ -48,7 +48,7 @@ export type UserInput = {
   item_id: string;
   kind: "note" | "inbox";
   text: string;
-  original: { title?: string; sources?: Source[]; legacy?: boolean };
+  original: { title?: string; sources?: Source[]; legacy?: boolean; submitted_by?: "user" | "agent" };
   submitted_at: string;
   status: "pending" | "processed" | "superseded" | "withdrawn";
   archived: boolean;
@@ -321,6 +321,7 @@ export function useItemAction(itemId: string, onSuccess?: () => void) {
         `/items/${itemId}/actions`,
         {
           request_id: request.current.id,
+          actor: "user",
           expected_state_version: input.item.state_version,
           action: input.action,
         },
@@ -615,6 +616,7 @@ export function ItemDetail() {
       request_id: noteRequest.current.id,
       expected_state_version: item.state_version,
       user_note: note,
+      actor: "user",
     });
   }
   if (query.isPending) return <p role="status">Opening report…</p>;

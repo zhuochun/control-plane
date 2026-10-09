@@ -23,7 +23,7 @@ func TestItemWorkCommandAndDelegationFilters(t *testing.T) {
 	}))
 	defer server.Close()
 	file := filepath.Join(t.TempDir(), "work.json")
-	if err := os.WriteFile(file, []byte(`{"expected_content_version":2,"context_md":"Result based on v1"}`), 0600); err != nil {
+	if err := os.WriteFile(file, []byte(`{"expected_content_version":2,"title":"Corrected title","summary":"Corrected summary","reason":"Owner request","context_md":"Result based on v1"}`), 0600); err != nil {
 		t.Fatal(err)
 	}
 	cmd := command()
@@ -32,7 +32,7 @@ func TestItemWorkCommandAndDelegationFilters(t *testing.T) {
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)
 	}
-	if path != "/api/v1/items/item-1/work" || method != "PATCH" || !strings.Contains(body, `"expected_content_version":2`) {
+	if path != "/api/v1/items/item-1/work" || method != "PATCH" || !strings.Contains(body, `"expected_content_version":2`) || !strings.Contains(body, `"title":"Corrected title"`) || !strings.Contains(body, `"reason":"Owner request"`) {
 		t.Fatalf("bad work command: %s %s %s", method, path, body)
 	}
 	cmd = command()
@@ -43,6 +43,15 @@ func TestItemWorkCommandAndDelegationFilters(t *testing.T) {
 	}
 	if path != "/api/v1/items/item-1/inputs/process" || method != "POST" || !strings.Contains(body, `"expected_content_version":2`) {
 		t.Fatalf("bad processing command: %s %s %s", method, path, body)
+	}
+	cmd = command()
+	cmd.SetOut(io.Discard)
+	cmd.SetArgs([]string{"--server", server.URL, "item", "note", "item-1", "--file", file, "--actor", "agent"})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if path != "/api/v1/items/item-1/note" || method != "PUT" || !strings.Contains(body, `"actor":"agent"`) {
+		t.Fatalf("CLI actor lost: %s %s %s", method, path, body)
 	}
 	cmd = command()
 	cmd.SetOut(io.Discard)

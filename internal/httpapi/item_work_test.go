@@ -48,8 +48,18 @@ func TestWorkHTTPBoundsAndRecovery(t *testing.T) {
 		return response.Body.Bytes()
 	}
 	path := "/items/" + item.ID + "/work"
-	body := `{"request_id":"http-handoff","expected_content_version":1,"delegations":[{"id":"research","executor":"agent:A & B","external_ref":"session:1?&","instructions_md":"Read spec v1","status":"pending","context_md":"Input Item v1"}]}`
+	body := `{"request_id":"http-handoff","expected_content_version":1,"title":"Clarified title","summary":"Corrected summary","reason":"Owner requested correction","delegations":[{"id":"research","executor":"agent:A & B","external_ref":"session:1?&","instructions_md":"Read spec v1","status":"pending","context_md":"Input Item v1"}]}`
 	first := call("PATCH", path, body, 200)
+	var edited app.Item
+	if err = json.Unmarshal(first, &edited); err != nil || edited.Title != "Clarified title" || edited.Summary != "Corrected summary" || edited.Origin != "user" || edited.StateVersion != item.StateVersion {
+		t.Fatalf("simple HTTP edit lost fields/ownership: %s %v", first, err)
+	}
+	call("PUT", "/items/"+item.ID+"/note", `{"actor":"agent","expected_state_version":1,"user_note":"Transcribed owner instruction"}`, 200)
+	var actor string
+	if err = s.DB.QueryRowContext(ctx, "SELECT actor FROM events WHERE entity_id=? AND change_type='item.note_updated'", item.ID).Scan(&actor); err != nil || actor != "agent" {
+		t.Fatalf("HTTP actor lost: %s %v", actor, err)
+	}
+	call("PUT", "/items/"+item.ID+"/note", `{"actor":"unrecognized","expected_state_version":2,"user_note":"Invalid"}`, 422)
 	call("PATCH", path, `{"expected_content_version":1,"context_md":"Stale"}`, 409)
 	call("PATCH", path, `{"expected_content_version":2,"watch_id":"changed"}`, 400)
 	call("PATCH", path, `{"expected_content_version":2,"user_note":"changed"}`, 400)

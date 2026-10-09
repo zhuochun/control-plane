@@ -802,6 +802,12 @@ func decodeEventCursor(cursor string) (int64, error) {
 	return seq, nil
 }
 
+// Owner-state changes remain required context even when an agent performed the
+// requested mutation. Agent work/publication events remain outside this feed.
+const requiredChangePredicate = `(actor='user' OR entity_type='proposal' OR
+ (entity_type='item' AND (change_type IN ('item.note_updated','item.state_updated') OR
+ (change_type='item.created' AND json_extract(payload,'$.origin')='user'))))`
+
 func eventsPage(ctx context.Context, db rowsQuerier, after, through int64, cursor string, limit int) ([]Event, string, error) {
 	if after < 0 || through < after {
 		return nil, "", Invalid("expected 0 <= after_seq <= through_seq")
@@ -820,7 +826,7 @@ func eventsPage(ctx context.Context, db rowsQuerier, after, through int64, curso
 		}
 		start = decoded
 	}
-	rows, err := db.QueryContext(ctx, `SELECT seq,occurred_at,actor,entity_type,entity_id,change_type,payload FROM events WHERE seq>? AND seq<=? AND (actor='user' OR entity_type='proposal') ORDER BY seq LIMIT ?`, start, through, limit+1)
+	rows, err := db.QueryContext(ctx, `SELECT seq,occurred_at,actor,entity_type,entity_id,change_type,payload FROM events WHERE seq>? AND seq<=? AND `+requiredChangePredicate+` ORDER BY seq LIMIT ?`, start, through, limit+1)
 	if err != nil {
 		return nil, "", err
 	}
@@ -860,7 +866,7 @@ func (a *App) ChangesPage(ctx context.Context, after, through int64, cursor stri
 }
 
 func eventsBetween(ctx context.Context, db rowsQuerier, after, through int64) ([]Event, error) {
-	rows, err := db.QueryContext(ctx, `SELECT seq,occurred_at,actor,entity_type,entity_id,change_type,payload FROM events WHERE seq>? AND seq<=? AND (actor='user' OR entity_type='proposal') ORDER BY seq`, after, through)
+	rows, err := db.QueryContext(ctx, `SELECT seq,occurred_at,actor,entity_type,entity_id,change_type,payload FROM events WHERE seq>? AND seq<=? AND `+requiredChangePredicate+` ORDER BY seq`, after, through)
 	if err != nil {
 		return nil, err
 	}

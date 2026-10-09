@@ -82,6 +82,7 @@ type actionInput struct {
 	RequestID            string     `json:"request_id,omitempty"`
 	ExpectedStateVersion int64      `json:"expected_state_version"`
 	Action               app.Action `json:"action"`
+	Reason               string     `json:"reason,omitempty"`
 }
 type proposalInput struct {
 	RequestID        string         `json:"request_id,omitempty"`
@@ -221,7 +222,7 @@ func New(serverURL, version string) *mcp.Server {
 		value, err := caller.call(ctx, http.MethodGet, "/items/"+input.ItemID, nil)
 		return respond(value, err)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "update_item_work", InputSchema: reportInputSchema[workInput](), Description: "Update an assigned Item without a Run: replace report/context, add evidence, and merge delegations by ID. Read get_item first; preserve prior conclusions, report actions, and continuation context. Omitted fields retain content; empty lists remove nothing. Executor patches should omit external_ref and leave delivery pending for primary review. Identify the input version and requirements actually used. On content_conflict, reread, merge, and retry with current expected_content_version and a new request_id; reuse IDs only for identical uncertain retries. Does not change provenance, relevance or user state."}, func(ctx context.Context, _ *mcp.CallToolRequest, input workInput) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "update_item_work", InputSchema: reportInputSchema[workInput](), Description: "Edit an existing Item without a Run: correct title/summary, replace report/context, add evidence, or merge delegations by ID. Optional reason records the request basis; edits are credited to agent and never acknowledge or process user input. Read get_item first; preserve prior conclusions, report actions and continuation context. Omitted fields retain values; empty lists remove nothing. Executor patches omit external_ref and leave delivery pending for primary review. Identify the input version and requirements actually used. On conflict, reread and merge; changed payloads need a new request_id. Only identical uncertain retries reuse IDs. Preserves identity, origin, provenance, relevance and user state."}, func(ctx context.Context, _ *mcp.CallToolRequest, input workInput) (*mcp.CallToolResult, map[string]any, error) {
 		value, err := caller.call(ctx, http.MethodPatch, "/items/"+url.PathEscape(input.ItemID)+"/work", input.Update)
 		return respond(value, err)
 	})
@@ -270,7 +271,7 @@ func New(serverURL, version string) *mcp.Server {
 		return respond(value, err)
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "apply_item_action", Description: "Apply an explicit Todo, reminder, or acknowledgement action with state-version fencing."}, func(ctx context.Context, _ *mcp.CallToolRequest, input actionInput) (*mcp.CallToolResult, map[string]any, error) {
-		body := app.ApplyItemAction{RequestID: input.RequestID, ExpectedStateVersion: input.ExpectedStateVersion, Action: input.Action}
+		body := app.ApplyItemAction{RequestID: input.RequestID, Actor: "agent", Reason: input.Reason, ExpectedStateVersion: input.ExpectedStateVersion, Action: input.Action}
 		value, err := caller.call(ctx, http.MethodPost, "/items/"+input.ItemID+"/actions", body)
 		return respond(value, err)
 	})

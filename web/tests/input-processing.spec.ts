@@ -45,8 +45,10 @@ test("withdrawn note does not claim agent processing", {
 }, async ({ page, request }) => {
   const created = await request.post("/api/v1/items", { data: { dedupe_key: crypto.randomUUID(), kind: "report", title: "Withdraw note", summary: "Ordinary Item", report: { schema_version: 1, body_md: "Report" } } });
   const item = await created.json();
+  expect((await request.put(`/api/v1/items/${item.id}/note`, { data: { actor: "agent", expected_state_version: 1, user_note: "Transcribed owner instruction" } })).ok()).toBeTruthy();
   await page.goto("/library?q=Withdraw%20note");
   const reader = page.getByRole("region", { name: "Item details" });
+  await expect(reader).toContainText("Submitted by agent");
   const note = reader.getByRole("textbox", { name: "Your note", exact: true });
   await note.fill("Temporary instruction");
   await reader.getByRole("button", { name: "Save note", exact: true }).click();
@@ -55,8 +57,12 @@ test("withdrawn note does not claim agent processing", {
   await reader.getByRole("button", { name: "Save note", exact: true }).click();
   await expect(reader.locator(".reader-input-history [role=status]")).toHaveText("Note withdrawn", { timeout: 12000 });
   const history = await (await request.get(`/api/v1/items/${item.id}/inputs`)).json();
-  expect(history.items[0].status).toBe("withdrawn");
-  expect(history.items[0].attempt_count).toBe(0);
+  const withdrawn = history.items.find((input: { text: string }) => input.text === "Temporary instruction");
+  expect(withdrawn.status).toBe("withdrawn");
+  expect(withdrawn.attempt_count).toBe(0);
+  expect(withdrawn.original.submitted_by).toBe("user");
+  expect(history.items[0].status).toBe("superseded");
+  expect(history.items[0].original.submitted_by).toBe("agent");
 });
 
 test("history refreshes on input changes without its own polling loop", {

@@ -62,6 +62,7 @@ export function InboxCaptureDialog({ close }: { close: () => void }) {
         "/items",
         {
           request_id: attempt.current.requestId,
+          actor: "user",
           dedupe_key: `user:${identity.current}`,
           kind: "note",
           title: title.trim() || information.trim().split(/\r?\n/)[0].slice(0, 120),

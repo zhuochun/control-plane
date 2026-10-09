@@ -20,11 +20,15 @@ type Action struct {
 }
 type ApplyItemAction struct {
 	RequestID            string `json:"request_id"`
+	Actor                string `json:"actor,omitempty"`
+	Reason               string `json:"reason,omitempty"`
 	ExpectedStateVersion int64  `json:"expected_state_version"`
 	Action               Action `json:"action"`
 }
 type SetUserNote struct {
 	RequestID            string `json:"request_id"`
+	Actor                string `json:"actor,omitempty"`
+	Reason               string `json:"reason,omitempty"`
 	ExpectedStateVersion int64  `json:"expected_state_version"`
 	UserNote             string `json:"user_note"`
 }
@@ -34,6 +38,10 @@ func stateConflict(item Item) error {
 }
 
 func (a *App) ApplyItemAction(ctx context.Context, id string, input ApplyItemAction) (json.RawMessage, error) {
+	actor, err := ownerMutationActor(input.Actor)
+	if err != nil {
+		return nil, err
+	}
 	return a.mutate(ctx, input.RequestID, "POST /items/"+id+"/actions", input, func(tx *sql.Tx) (any, error) {
 		item, err := getItem(ctx, tx, id)
 		if err != nil {
@@ -116,7 +124,11 @@ func (a *App) ApplyItemAction(ctx context.Context, id string, input ApplyItemAct
 		if err != nil {
 			return nil, err
 		}
-		if err = a.event(ctx, tx, "user", "item", id, "item.state_updated", map[string]any{"action": input.Action, "state_version": item.StateVersion}); err != nil {
+		payload := map[string]any{"action": input.Action, "state_version": item.StateVersion}
+		if input.Reason != "" {
+			payload["reason"] = input.Reason
+		}
+		if err = a.event(ctx, tx, actor, "item", id, "item.state_updated", payload); err != nil {
 			return nil, err
 		}
 		return completeItem(ctx, tx, item)
@@ -180,6 +192,10 @@ func formatOffset(seconds int) string {
 }
 
 func (a *App) SetUserNote(ctx context.Context, id string, input SetUserNote) (json.RawMessage, error) {
+	actor, err := ownerMutationActor(input.Actor)
+	if err != nil {
+		return nil, err
+	}
 	return a.mutate(ctx, input.RequestID, "PUT /items/"+id+"/note", input, func(tx *sql.Tx) (any, error) {
 		item, err := getItem(ctx, tx, id)
 		if err != nil {
@@ -190,7 +206,7 @@ func (a *App) SetUserNote(ctx context.Context, id string, input SetUserNote) (js
 			return nil, stateConflict(item)
 		}
 		now := a.Now().UTC().UnixMilli()
-		if err = saveNoteInput(ctx, tx, item, input.UserNote, now); err != nil {
+		if err = saveNoteInput(ctx, tx, item, input.UserNote, now, actor); err != nil {
 			return nil, err
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE items SET user_note=?,state_version=state_version+1,state_updated_at=? WHERE id=?`, input.UserNote, now, id)
@@ -201,7 +217,11 @@ func (a *App) SetUserNote(ctx context.Context, id string, input SetUserNote) (js
 		if err != nil {
 			return nil, err
 		}
-		if err = a.event(ctx, tx, "user", "item", id, "item.note_updated", map[string]any{"state_version": item.StateVersion}); err != nil {
+		payload := map[string]any{"state_version": item.StateVersion}
+		if input.Reason != "" {
+			payload["reason"] = input.Reason
+		}
+		if err = a.event(ctx, tx, actor, "item", id, "item.note_updated", payload); err != nil {
 			return nil, err
 		}
 		return completeItem(ctx, tx, item)

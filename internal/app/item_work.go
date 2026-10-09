@@ -32,6 +32,9 @@ type DelegationPatch struct {
 type UpdateItemWork struct {
 	RequestID              string            `json:"request_id,omitempty"`
 	ExpectedContentVersion int64             `json:"expected_content_version"`
+	Title                  *string           `json:"title,omitempty"`
+	Summary                *string           `json:"summary,omitempty"`
+	Reason                 string            `json:"reason,omitempty"`
 	Report                 *Report           `json:"report,omitempty"`
 	ContextMD              *string           `json:"context_md,omitempty"`
 	Sources                []Source          `json:"sources,omitempty"`
@@ -95,7 +98,13 @@ func (a *App) UpdateItemWork(ctx context.Context, id string, input UpdateItemWor
 			DedupeKey: current.DedupeKey, Kind: current.Kind, Title: current.Title, Summary: current.Summary,
 			WatchID: current.WatchID, ParentID: current.ParentID, Interests: current.Interests,
 			Sources: current.Sources, ContextMD: current.ContextMD, Report: current.Report,
-			Delegations: input.Delegations, workUpdate: true}
+			Delegations: input.Delegations, workUpdate: true, editReason: input.Reason}
+		if input.Title != nil {
+			body.Title = *input.Title
+		}
+		if input.Summary != nil {
+			body.Summary = *input.Summary
+		}
 		if input.Report != nil {
 			body.Report = *input.Report
 		}

@@ -99,6 +99,8 @@ type Item struct {
 
 type PutItem struct {
 	RequestID              string            `json:"request_id,omitempty"`
+	Actor                  string            `json:"actor,omitempty"`
+	Reason                 string            `json:"reason,omitempty"`
 	DedupeKey              string            `json:"dedupe_key"`
 	ExpectedContentVersion int64             `json:"expected_content_version"`
 	Kind                   string            `json:"kind"`
@@ -114,6 +116,8 @@ type PutItem struct {
 	Delegations            []DelegationPatch `json:"delegations,omitempty"`
 	resolvedDelegations    []Delegation
 	workUpdate             bool
+	eventActor             string
+	editReason             string
 }
 
 const itemColumns = `id,dedupe_key,kind,origin,watch_id,parent_id,title,summary,content,content_version,todo_state,remind_at,reminder_timezone,acknowledged_content_version,user_note,state_version,created_at,content_updated_at,state_updated_at,
@@ -340,6 +344,11 @@ func mergeEvidence(old Item, input *PutItem) {
 }
 
 func (a *App) PutItem(ctx context.Context, id string, input PutItem) (json.RawMessage, error) {
+	actor, err := ownerMutationActor(input.Actor)
+	if err != nil {
+		return nil, err
+	}
+	input.eventActor, input.editReason = actor, input.Reason
 	if input.WatchID != nil {
 		return nil, Invalid("Watcher findings must be submitted through a Run")
 	}
@@ -397,6 +406,12 @@ func replaceItemInterests(ctx context.Context, tx *sql.Tx, itemID string, intere
 
 // putItemTx is shared by direct item commands and atomic Watch publication.
 func (a *App) putItemTx(ctx context.Context, tx *sql.Tx, id string, input PutItem, origin string) (any, error) {
+	actor := origin
+	if input.workUpdate {
+		actor = "agent"
+	} else if input.eventActor != "" {
+		actor = input.eventActor
+	}
 	if id != "" {
 		canonical, err := resolveID(ctx, tx, "items", id)
 		if err != nil {
@@ -465,7 +480,10 @@ func (a *App) putItemTx(ctx context.Context, tx *sql.Tx, id string, input PutIte
 		if err = replaceItemInterests(ctx, tx, id, input.Interests); err != nil {
 			return nil, err
 		}
-		snapshot := map[string]any{"title": input.Title, "summary": input.Summary, "kind": input.Kind, "content": contentFor(input), "interests": input.Interests}
+		snapshot := map[string]any{"title": input.Title, "summary": input.Summary, "kind": input.Kind, "content": contentFor(input), "interests": input.Interests, "actor": actor}
+		if input.editReason != "" {
+			snapshot["reason"] = input.editReason
+		}
 		snap, _ := json.Marshal(snapshot)
 		if _, err = tx.ExecContext(ctx, `INSERT INTO item_versions(item_id,content_version,snapshot) VALUES(?,1,?)`, id, string(snap)); err != nil {
 			return nil, err
@@ -475,11 +493,15 @@ func (a *App) putItemTx(ctx context.Context, tx *sql.Tx, id string, input PutIte
 			return nil, err
 		}
 		if origin == "user" && current.Kind == "note" && current.WatchID == nil {
-			if err = insertInput(ctx, tx, current, "inbox", current.Report.BodyMD, now); err != nil {
+			if err = insertInput(ctx, tx, current, "inbox", current.Report.BodyMD, now, actor); err != nil {
 				return nil, err
 			}
 		}
-		return current, a.event(ctx, tx, origin, "item", id, "item.created", map[string]any{"content_version": 1})
+		payload := map[string]any{"content_version": 1, "origin": origin}
+		if input.editReason != "" {
+			payload["reason"] = input.editReason
+		}
+		return current, a.event(ctx, tx, actor, "item", id, "item.created", payload)
 	}
 	if id != "" && id != current.ID {
 		return nil, &Error{Status: 409, Code: "content_conflict", Message: "dedupe_key belongs to another item", Details: map[string]any{"id": current.ID, "current_content_version": current.ContentVersion}}
@@ -514,7 +536,10 @@ func (a *App) putItemTx(ctx context.Context, tx *sql.Tx, id string, input PutIte
 	now := a.Now().UTC().UnixMilli()
 	version := current.ContentVersion + 1
 	content, _ := json.Marshal(contentFor(input))
-	snapshot := map[string]any{"title": input.Title, "summary": input.Summary, "kind": input.Kind, "content": contentFor(input), "interests": input.Interests}
+	snapshot := map[string]any{"title": input.Title, "summary": input.Summary, "kind": input.Kind, "content": contentFor(input), "interests": input.Interests, "actor": actor}
+	if input.editReason != "" {
+		snapshot["reason"] = input.editReason
+	}
 	snap, _ := json.Marshal(snapshot)
 	_, err = tx.ExecContext(ctx, `UPDATE items SET kind=?,watch_id=?,parent_id=?,title=?,summary=?,content=?,content_version=?,content_hash=?,content_updated_at=? WHERE id=?`, input.Kind, input.WatchID, input.ParentID, input.Title, input.Summary, string(content), version, hash, now, current.ID)
 	if err != nil {
@@ -530,11 +555,11 @@ func (a *App) putItemTx(ctx context.Context, tx *sql.Tx, id string, input PutIte
 	if err != nil {
 		return nil, err
 	}
-	actor := origin
-	if input.workUpdate {
-		actor = "agent"
+	payload := map[string]any{"content_version": version}
+	if input.editReason != "" {
+		payload["reason"] = input.editReason
 	}
-	return current, a.event(ctx, tx, actor, "item", current.ID, "item.content_updated", map[string]any{"content_version": version})
+	return current, a.event(ctx, tx, actor, "item", current.ID, "item.content_updated", payload)
 }
 
 type ItemFilters struct{ View, Kind, InterestID, WatchID, Query, DedupeKey, DelegationStatus, Executor, ExternalRef, Sort string }

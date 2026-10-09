@@ -78,8 +78,8 @@ func readInputs(ctx context.Context, db querier, where string, args ...any) ([]U
 	return items, rows.Err()
 }
 
-func insertInput(ctx context.Context, tx *sql.Tx, item Item, kind, text string, now int64) error {
-	original, err := json.Marshal(map[string]any{"title": item.Title, "sources": item.Sources})
+func insertInput(ctx context.Context, tx *sql.Tx, item Item, kind, text string, now int64, actor string) error {
+	original, err := json.Marshal(map[string]any{"title": item.Title, "sources": item.Sources, "submitted_by": actor})
 	if err != nil {
 		return err
 	}
@@ -87,7 +87,7 @@ func insertInput(ctx context.Context, tx *sql.Tx, item Item, kind, text string, 
 	return err
 }
 
-func saveNoteInput(ctx context.Context, tx *sql.Tx, item Item, text string, now int64) error {
+func saveNoteInput(ctx context.Context, tx *sql.Tx, item Item, text string, now int64, actor string) error {
 	if text == item.UserNote {
 		return nil
 	}
@@ -99,7 +99,7 @@ func saveNoteInput(ctx context.Context, tx *sql.Tx, item Item, text string, now 
 		return err
 	}
 	if strings.TrimSpace(text) != "" {
-		return insertInput(ctx, tx, item, "note", text, now)
+		return insertInput(ctx, tx, item, "note", text, now, actor)
 	}
 	return nil
 }

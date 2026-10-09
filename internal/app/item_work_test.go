@@ -13,6 +13,218 @@ import (
 
 func workText(value string) *string { return &value }
 
+func TestOwnerReceiptAttributionCompatibility(t *testing.T) {
+	ctx := context.Background()
+	a, _, _ := workFixture(t)
+	create := PutItem{RequestID: "legacy-create", DedupeKey: "legacy-receipt", Kind: "report", Title: "Original", Summary: "Owner capture", Report: Report{SchemaVersion: 1, BodyMD: "Original content"}}
+	first, err := a.PutItem(ctx, "", create)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var item Item
+	if err = json.Unmarshal(first, &item); err != nil {
+		t.Fatal(err)
+	}
+	create.Actor = "agent"
+	replay, err := a.PutItem(ctx, "", create)
+	if err != nil || string(first) != string(replay) {
+		t.Fatalf("legacy create replay changed: %v", err)
+	}
+	create.Title = "Changed payload"
+	_, err = a.PutItem(ctx, "", create)
+	var problem *Error
+	if !errors.As(err, &problem) || problem.Code != "idempotency_conflict" {
+		t.Fatalf("changed legacy create accepted: %v", err)
+	}
+	note := SetUserNote{RequestID: "legacy-note", ExpectedStateVersion: 1, UserNote: "Owner instruction"}
+	first, err = a.SetUserNote(ctx, item.ID, note)
+	if err != nil {
+		t.Fatal(err)
+	}
+	note.Actor = "agent"
+	replay, err = a.SetUserNote(ctx, item.ID, note)
+	if err != nil || string(first) != string(replay) {
+		t.Fatalf("legacy note replay changed: %v", err)
+	}
+	note.Reason = "New request basis"
+	_, err = a.SetUserNote(ctx, item.ID, note)
+	if !errors.As(err, &problem) || problem.Code != "idempotency_conflict" {
+		t.Fatalf("changed reason accepted: %v", err)
+	}
+	var count int
+	if err = a.Store.DB.QueryRowContext(ctx, "SELECT count(*) FROM events WHERE entity_id=? AND actor='user'", item.ID).Scan(&count); err != nil || count != 2 {
+		t.Fatalf("legacy history was rewritten or duplicated: %d %v", count, err)
+	}
+	action := ApplyItemAction{RequestID: "attributed-action", Actor: "agent", ExpectedStateVersion: 2, Action: Action{Type: "set_todo", State: "todo"}}
+	if _, err = a.ApplyItemAction(ctx, item.ID, action); err != nil {
+		t.Fatal(err)
+	}
+	action.Actor = "user"
+	_, err = a.ApplyItemAction(ctx, item.ID, action)
+	if !errors.As(err, &problem) || problem.Code != "idempotency_conflict" {
+		t.Fatalf("explicit actor change accepted: %v", err)
+	}
+}
+
+func TestSimpleEditPreservesStateProvenanceAndIntake(t *testing.T) {
+	ctx := context.Background()
+	a, item, watch := workFixture(t)
+	coverageBefore, err := a.Watch(ctx, watch.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := a.SetUserNote(ctx, item.ID, SetUserNote{ExpectedStateVersion: 1, UserNote: "Please clarify the heading"}); err != nil {
+		t.Fatal(err)
+	}
+	before, err := a.Item(ctx, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	input := UpdateItemWork{RequestID: "simple-edit", ExpectedContentVersion: item.ContentVersion, Title: workText("Clarified heading"), Summary: workText("Corrected summary"), Reason: "Owner requested a clearer heading"}
+	raw, err := a.UpdateItemWork(ctx, item.ID, input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var edited Item
+	if err = json.Unmarshal(raw, &edited); err != nil {
+		t.Fatal(err)
+	}
+	edited, err = a.Item(ctx, edited.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if edited.Title != *input.Title || edited.Summary != *input.Summary || edited.ContentVersion != item.ContentVersion+1 || edited.Origin != item.Origin || !reflect.DeepEqual(edited.WatchID, item.WatchID) || !reflect.DeepEqual(edited.Sources, item.Sources) || !reflect.DeepEqual(edited.Interests, item.Interests) || !reflect.DeepEqual(edited.Report, item.Report) || edited.StateVersion != before.StateVersion || edited.AcknowledgedContentVersion != before.AcknowledgedContentVersion || edited.UserNote != before.UserNote || len(edited.PendingInputs) != 1 || edited.PendingInputs[0].ID != before.PendingInputs[0].ID {
+		t.Fatalf("edit changed ownership, state, or intake: %+v", edited)
+	}
+	var snapshot, actor, payload string
+	if err = a.Store.DB.QueryRowContext(ctx, "SELECT snapshot FROM item_versions WHERE item_id=? AND content_version=?", item.ID, edited.ContentVersion).Scan(&snapshot); err != nil {
+		t.Fatal(err)
+	}
+	var recorded map[string]any
+	if err = json.Unmarshal([]byte(snapshot), &recorded); err != nil || recorded["actor"] != "agent" || recorded["reason"] != input.Reason {
+		t.Fatalf("missing version attribution: %s %v", snapshot, err)
+	}
+	if err = a.Store.DB.QueryRowContext(ctx, "SELECT actor,payload FROM events WHERE entity_id=? AND change_type='item.content_updated' ORDER BY seq DESC LIMIT 1", item.ID).Scan(&actor, &payload); err != nil || actor != "agent" {
+		t.Fatalf("wrong event actor: %s %s %v", actor, payload, err)
+	}
+	replay, err := a.UpdateItemWork(ctx, item.ID, input)
+	if err != nil || string(replay) != string(raw) {
+		t.Fatalf("edit retry changed: %v", err)
+	}
+	input.RequestID = "stale-edit"
+	if _, err = a.UpdateItemWork(ctx, item.ID, input); err == nil {
+		t.Fatal("stale edit succeeded")
+	}
+	input.ExpectedContentVersion = edited.ContentVersion
+	input.Title = workText("")
+	if _, err = a.UpdateItemWork(ctx, item.ID, input); err == nil {
+		t.Fatal("blank title succeeded")
+	}
+	latest, err := a.Watch(ctx, watch.ID)
+	if err != nil || string(latest.Cursor) != string(coverageBefore.Cursor) || !latest.NextDueAt.Equal(coverageBefore.NextDueAt) {
+		t.Fatalf("edit changed coverage: %+v %v", latest, err)
+	}
+}
+
+func TestAgentOwnerMutationsRetainAttributionAndRequiredContext(t *testing.T) {
+	ctx := context.Background()
+	a, _, _ := workFixture(t)
+	raw, err := a.PutItem(ctx, "", PutItem{Actor: "agent", DedupeKey: "dictated-input", Kind: "note", Title: "Owner instruction", Summary: "Update my Interests", Report: Report{SchemaVersion: 1, BodyMD: "Please update my Interests"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var item Item
+	if err = json.Unmarshal(raw, &item); err != nil {
+		t.Fatal(err)
+	}
+	item, err = a.Item(ctx, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if item.Origin != "user" || len(item.PendingInputs) != 1 {
+		t.Fatalf("lost user intake: %+v", item)
+	}
+	if _, err = a.SetUserNote(ctx, item.ID, SetUserNote{Actor: "agent", Reason: "Transcribed owner instruction", ExpectedStateVersion: 1, UserNote: "Use the new scope"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = a.ApplyItemAction(ctx, item.ID, ApplyItemAction{Actor: "agent", ExpectedStateVersion: 2, Action: Action{Type: "set_todo", State: "todo"}}); err != nil {
+		t.Fatal(err)
+	}
+	for _, kind := range []string{"item.created", "item.note_updated", "item.state_updated"} {
+		var actor string
+		if err = a.Store.DB.QueryRowContext(ctx, "SELECT actor FROM events WHERE entity_id=? AND change_type=? ORDER BY seq DESC LIMIT 1", item.ID, kind).Scan(&actor); err != nil || actor != "agent" {
+			t.Fatalf("%s actor %s: %v", kind, actor, err)
+		}
+	}
+	current, err := a.Item(ctx, item.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, input := range current.PendingInputs {
+		var original map[string]any
+		if err = json.Unmarshal(input.Original, &original); err != nil || original["submitted_by"] != "agent" {
+			t.Fatalf("input attribution lost: %s %v", input.Original, err)
+		}
+	}
+	if _, err = a.SetUserNote(ctx, item.ID, SetUserNote{Actor: "unknown", ExpectedStateVersion: current.StateVersion, UserNote: "Wrong actor"}); err == nil {
+		t.Fatal("invalid note actor succeeded")
+	}
+	if _, err = a.ApplyItemAction(ctx, item.ID, ApplyItemAction{Actor: "unknown", ExpectedStateVersion: current.StateVersion, Action: Action{Type: "set_todo", State: "done"}}); err == nil {
+		t.Fatal("invalid action actor succeeded")
+	}
+	if _, err = a.PutItem(ctx, "", PutItem{Actor: "unknown"}); err == nil {
+		t.Fatal("invalid content actor succeeded")
+	}
+	raw, err = a.StartRun(ctx, StartRun{WatchIDs: Field[[]string]{Set: true, Value: []string{}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var started struct {
+		Run     Run `json:"run"`
+		Context struct {
+			Changes []Event `json:"changes"`
+			Inputs  struct {
+				Items []UserInput `json:"items"`
+			} `json:"user_inputs"`
+		} `json:"context"`
+	}
+	if err = json.Unmarshal(raw, &started); err != nil || len(started.Context.Inputs.Items) != 2 {
+		t.Fatalf("intake not captured: %s %v", raw, err)
+	}
+	seen := map[string]bool{}
+	for _, event := range started.Context.Changes {
+		if event.EntityID == item.ID {
+			seen[event.ChangeType] = true
+		}
+	}
+	if len(seen) != 3 {
+		t.Fatalf("agent owner-state changes vanished: %v", seen)
+	}
+	var cursor string
+	paged := map[string]bool{}
+	for {
+		page, err := a.ChangesPage(ctx, started.Run.AfterSeq, started.Run.ThroughSeq, cursor, 1)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for _, event := range page["items"].([]Event) {
+			if event.EntityID == item.ID {
+				paged[event.ChangeType] = true
+			}
+		}
+		cursor, _ = page["next_cursor"].(string)
+		if cursor == "" {
+			break
+		}
+	}
+	if !reflect.DeepEqual(seen, paged) {
+		t.Fatalf("paged changes disagree: %v %v", seen, paged)
+	}
+	if _, err = a.FinishRun(ctx, started.Run.ID, FinishRun{}); err == nil {
+		t.Fatal("agent submission escaped input accounting")
+	}
+}
+
 func workFixture(t *testing.T) (*App, Item, Watch) {
 	t.Helper()
 	ctx := context.Background()

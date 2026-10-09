@@ -77,6 +77,7 @@ export function ItemReader({
         "/items/" + itemId + "/note",
         {
           request_id: noteRequest.current.id,
+          actor: "user",
           expected_state_version: version,
           user_note: input.value,
         },

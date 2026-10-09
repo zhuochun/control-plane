@@ -154,9 +154,24 @@ func TestItemLookupAndCapturedAttentionThroughMCP(t *testing.T) {
 		t.Fatalf("exact lookup failed: %#v", exact)
 	}
 	assignedID := items[0].(map[string]any)["id"]
-	updated := call("update_item_work", map[string]any{"item_id": assignedID, "update": map[string]any{"expected_content_version": 1, "delegations": []any{map[string]any{"id": "research", "executor": "agent:A & B", "external_ref": "session:1?&", "instructions_md": "Read assigned Item v1", "status": "pending"}}}})
-	if updated["content_version"] != float64(2) {
+	updated := call("update_item_work", map[string]any{"item_id": assignedID, "update": map[string]any{"expected_content_version": 1, "title": "Existing matter clarified", "summary": "Corrected summary", "reason": "Owner requested correction", "delegations": []any{map[string]any{"id": "research", "executor": "agent:A & B", "external_ref": "session:1?&", "instructions_md": "Read assigned Item v1", "status": "pending"}}}})
+	if updated["content_version"] != float64(2) || updated["title"] != "Existing matter clarified" || updated["summary"] != "Corrected summary" {
 		t.Fatalf("work update failed: %#v", updated)
+	}
+	call("apply_item_action", map[string]any{"item_id": assignedID, "expected_state_version": 1, "reason": "Owner asked to mark this version seen", "action": map[string]any{"type": "acknowledge", "content_version": 2}})
+	var actor string
+	if err = s.DB.QueryRowContext(ctx, "SELECT actor FROM events WHERE entity_id=? AND change_type='item.state_updated' ORDER BY seq DESC LIMIT 1", assignedID).Scan(&actor); err != nil || actor != "agent" {
+		t.Fatalf("MCP action impersonated user: %s %v", actor, err)
+	}
+	legacy := app.ApplyItemAction{RequestID: "legacy-mcp-action", ExpectedStateVersion: 2, Action: app.Action{Type: "acknowledge", ContentVersion: 1}}
+	legacyResponse, err := a.ApplyItemAction(ctx, assignedID.(string), legacy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	replayed := call("apply_item_action", map[string]any{"item_id": assignedID, "request_id": legacy.RequestID, "expected_state_version": legacy.ExpectedStateVersion, "action": map[string]any{"type": "acknowledge", "content_version": 1}})
+	var committed map[string]any
+	if err = json.Unmarshal(legacyResponse, &committed); err != nil || replayed["state_version"] != committed["state_version"] {
+		t.Fatalf("legacy MCP receipt did not replay: %#v %v", replayed, err)
 	}
 	delegated := call("list_items", map[string]any{"executor": "agent:A & B", "external_ref": "session:1?&", "delegation_status": "pending,blocked", "limit": 1})
 	if len(delegated["items"].([]any)) != 1 || delegated["items"].([]any)[0].(map[string]any)["id"] != assignedID {
