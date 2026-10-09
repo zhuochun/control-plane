@@ -20,7 +20,7 @@ func itemCommand(send request) *cobra.Command {
 		}
 		return send(cmd, "GET", "/items?"+values.Encode(), nil)
 	}}
-	list.Flags().StringVar(&view, "view", "all", "all, attention, todo, or done")
+	list.Flags().StringVar(&view, "view", "all", "all, attention, todo, done, inbox, or archived")
 	list.Flags().StringVar(&kind, "kind", "", "Filter by item kind")
 	list.Flags().StringVar(&interestID, "interest", "", "Filter by Interest ID")
 	list.Flags().StringVar(&watchID, "watch", "", "Filter by Watch ID")
@@ -80,6 +80,29 @@ func itemCommand(send request) *cobra.Command {
 	work.Flags().StringVar(&workFile, "file", "", "JSON work update, or - for stdin")
 	_ = work.MarkFlagRequired("file")
 	root.AddCommand(work)
+	var processFile string
+	process := &cobra.Command{Use: "process-input <id>", Args: cobra.ExactArgs(1), Short: "Record captured user input handling, failure, or inbox archive", RunE: func(cmd *cobra.Command, args []string) error {
+		body, err := commandFile(cmd, processFile)
+		if err != nil {
+			return err
+		}
+		return send(cmd, "POST", "/items/"+url.PathEscape(args[0])+"/inputs/process", body)
+	}}
+	process.Flags().StringVar(&processFile, "file", "", "JSON handling command, or - for stdin")
+	_ = process.MarkFlagRequired("file")
+	root.AddCommand(process)
+	var inputOffset int
+	var historyInputID string
+	history := &cobra.Command{Use: "inputs <id>", Args: cobra.ExactArgs(1), Short: "Read original submissions and processing history", RunE: func(cmd *cobra.Command, args []string) error {
+		target := "/items/" + url.PathEscape(args[0]) + "/inputs"
+		if historyInputID != "" {
+			target += "/" + url.PathEscape(historyInputID) + "/attempts"
+		}
+		return send(cmd, "GET", target+"?offset="+fmt.Sprint(inputOffset), nil)
+	}}
+	history.Flags().IntVar(&inputOffset, "offset", 0, "History offset returned as next_offset")
+	history.Flags().StringVar(&historyInputID, "input", "", "Read paged attempts for this exact input ID")
+	root.AddCommand(history)
 	for _, operation := range []string{"action", "note"} {
 		operation := operation
 		var file string

@@ -2,6 +2,18 @@
 
 Use the configured aicp MCP tools to complete one truthful heartbeat:
 
+Every Run also has required `context.user_inputs`: consume all its `get_brief`
+continuations and read the complete chronological batch, current Items, and
+relevant `get_item_inputs` history before acting. Record each exact input using
+`process_item_input` with current content/state versions, visible `result_md`,
+and an outcome. Capture and preserve durable results from owning configuration
+commands before reporting success. Inbox input may update relevance or archive
+its capture; notes clear only after successful handling and remain in history.
+Publish blocked/failed attempts on the Item with what changed and the next step,
+leaving input pending for user guidance. Finish rejects omitted captured input.
+Recovered success controls effective status; historical attempts remain visible.
+Newer input belongs to the next Run. Attention remains optional.
+
 1. Call `start_run` and read its `{run, context}` packet: captured `AGENTS.md` and `USER.md`, every applicable Interest page, selected Watchers and their prior coverage/limitations, and the overview counts. Read every page in the Run's captured `(after_seq, through_seq]` change range before claiming complete change handling or acknowledging it. Interest cursors use `get_brief`; change cursors use `get_changes` with the captured bounds. Global Attention is optional under `context.available.attention`, not a Todo execution queue. A fresh `get_brief` is only a live overview and may drift between pages.
 2. Inspect only the selected Watchers. Use each Watcher's bounded source instructions and cursor. Assess source input against only the Interest IDs and revisions captured for that Watcher; read each Interest's instructions from the Run's Interest context. A broad Watcher may include several Interests, while an explicit Watcher includes only its active links. Revisit linked open Items when useful.
 3. When source evidence concerns an existing matter, use `list_items` with its exact dedupe key or bounded Watcher/text filters, then `get_item` or `get_context` when needed; retain identity and use the current content version. Shared source URLs do not require merging distinct matters. Read affected Items when captured user changes need further interpretation, even if those Items are source-free or no longer in Attention. If an optional summary has `truncated_fields`, read the full Item before relying on omitted text.

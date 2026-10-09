@@ -17,6 +17,16 @@ import {
   validateJourney,
 } from "./observations.mjs";
 import { readFileSync } from "node:fs";
+import { OwnedServer, baseURL } from "./owned-server.mjs";
+
+test("owned subprocess defaults cannot escape to another aicp installation", async () => {
+  const server = new OwnedServer();
+  try {
+    const environment = server.environment();
+    assert.equal(environment.AICP_SERVER_URL, baseURL);
+    assert.equal(environment.AICP_DATA_DIR, server.data);
+  } finally { await server.close(); }
+});
 
 const cases = [
   {

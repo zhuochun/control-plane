@@ -113,7 +113,7 @@ try {
             : (durations[options.level] ?? null),
           prerequisites: [
             "Go and Node/npm",
-            ...(system ? ["Chromium; port 7331 free"] : []),
+            ...(system ? [`Chromium; loopback port ${process.env.AICP_TEST_PORT ?? "7331"} free`] : []),
             ...(options.profile === "renderer"
               ? ["checksum-pinned PlantUML and compatible Java"]
               : []),

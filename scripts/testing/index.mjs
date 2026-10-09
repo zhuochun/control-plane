@@ -46,6 +46,7 @@ export const goFiles = {
     ["contract", "functional"],
   ),
   "internal/app/item_work_test.go": component(["delegations", "items"]),
+  "internal/app/item_inputs_test.go": component(["items", "runs"], "application + SQLite", ["functional", "persistence", "recovery"]),
   "internal/app/items_test.go": component(["items"]),
   "internal/app/proposals_test.go": component(["setup"]),
   "internal/app/publication_test.go": component(

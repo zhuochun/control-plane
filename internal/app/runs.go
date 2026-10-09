@@ -156,8 +156,23 @@ func (a *App) RunDetail(ctx context.Context, id string) (map[string]any, error) 
 	if err != nil {
 		return nil, err
 	}
-	return map[string]any{"run": run, "selected_watches": compactSelectedWatches(run.SelectedWatches), "results": results,
-		"context": map[string]any{"consistency": "captured", "interests": map[string]any{"cursor": encodeContextCursor(contextCursor{RunID: run.ID, Collection: "interests"})}, "attention": map[string]any{"cursor": encodeContextCursor(contextCursor{RunID: run.ID, Collection: "attention_items"})}}}, nil
+	var completionJSON string
+	err = a.Store.DB.QueryRowContext(ctx, "SELECT payload FROM events WHERE entity_type='run' AND entity_id=? AND change_type='run.finished' ORDER BY seq DESC LIMIT 1", run.ID).Scan(&completionJSON)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	var inputs any
+	if err == nil {
+		var completion struct {
+			InputSummary any `json:"input_summary"`
+		}
+		if err = json.Unmarshal([]byte(completionJSON), &completion); err != nil {
+			return nil, err
+		}
+		inputs = completion.InputSummary
+	}
+	return map[string]any{"run": run, "selected_watches": compactSelectedWatches(run.SelectedWatches), "results": results, "input_summary": inputs,
+		"context": map[string]any{"consistency": "captured", "user_inputs": map[string]any{"cursor": encodeContextCursor(contextCursor{RunID: run.ID, Collection: "user_inputs"})}, "interests": map[string]any{"cursor": encodeContextCursor(contextCursor{RunID: run.ID, Collection: "interests"})}, "attention": map[string]any{"cursor": encodeContextCursor(contextCursor{RunID: run.ID, Collection: "attention_items"})}}}, nil
 }
 func (a *App) Runs(ctx context.Context) ([]RunSummary, error) {
 	rows, err := a.Store.DB.QueryContext(ctx, "SELECT id,runner_label,status,started_at,ended_at,after_seq,through_seq,summary,json_array_length(selected_watches),(SELECT count(*) FROM watch_results wr WHERE wr.run_id=runs.id) FROM runs ORDER BY started_at DESC,id DESC")
@@ -334,9 +349,10 @@ ORDER BY i.id`, selected[index].MatchingPolicy, selected[index].ID)
 }
 
 type runContextSnapshot struct {
-	Interests []Interest              `json:"interests"`
-	Attention []CapturedAttentionItem `json:"attention_items"`
-	Contexts  map[string]string       `json:"contexts"`
+	UserInputs []UserInput             `json:"user_inputs,omitempty"`
+	Interests  []Interest              `json:"interests"`
+	Attention  []CapturedAttentionItem `json:"attention_items"`
+	Contexts   map[string]string       `json:"contexts"`
 }
 
 type contextCursor struct {
@@ -451,7 +467,11 @@ func contextSnapshot(ctx context.Context, db *sql.Tx, settings settingsRow, now 
 	if err != nil {
 		return runContextSnapshot{}, err
 	}
-	return runContextSnapshot{Interests: interests, Attention: attention, Contexts: map[string]string{"AGENTS.md": settings.agentsMD, "USER.md": settings.userMD}}, nil
+	inputs, err := readInputs(ctx, db, "WHERE status='pending' ORDER BY submitted_at,id")
+	if err != nil {
+		return runContextSnapshot{}, err
+	}
+	return runContextSnapshot{UserInputs: inputs, Interests: interests, Attention: attention, Contexts: map[string]string{"AGENTS.md": settings.agentsMD, "USER.md": settings.userMD}}, nil
 }
 
 func contextPage[T any](runID, collection string, items []T, offset, pageSize int) (map[string]any, error) {
@@ -679,6 +699,23 @@ func (a *App) FinishRun(ctx context.Context, id string, input FinishRun) (json.R
 		} else if success+partial > 0 {
 			status = "partial"
 		}
+		snapshot, err := loadRunContext(ctx, tx, id)
+		if err != nil {
+			return nil, err
+		}
+		inputStatus, inputCounts, err := inputCompletion(ctx, tx, snapshot, id)
+		if err != nil {
+			return nil, err
+		}
+		if inputStatus != "completed" {
+			if total == 0 || status == "failed" && inputStatus == "failed" {
+				status = inputStatus
+			} else {
+				status = "partial"
+			}
+		} else if status == "failed" && len(snapshot.UserInputs) > 0 {
+			status = "partial"
+		}
 		if input.AckThroughSeq != nil {
 			if *input.AckThroughSeq != run.ThroughSeq || *input.AckThroughSeq < run.AfterSeq {
 				return nil, Invalid("ack_through_seq must equal this run's captured through_seq")
@@ -693,6 +730,11 @@ func (a *App) FinishRun(ctx context.Context, id string, input FinishRun) (json.R
 		}
 		_, err = tx.ExecContext(ctx, `UPDATE runs SET status=?,ended_at=?,summary=? WHERE id=?`, status, now.UnixMilli(), input.Summary, id)
 		if err != nil {
+			return nil, err
+		}
+		if err = a.event(ctx, tx, "agent", "run", id, "run.finished", map[string]any{
+			"status": status, "input_summary": map[string]any{"status": inputStatus, "counts": inputCounts, "captured_count": len(snapshot.UserInputs)},
+		}); err != nil {
 			return nil, err
 		}
 		return getRun(ctx, tx, id)
@@ -983,5 +1025,9 @@ count(*) FILTER (WHERE todo_state='todo') FROM items`
 	if err = a.Store.DB.QueryRowContext(ctx, query, now.UnixMilli()).Scan(&counts.All, &counts.Attention, &counts.Todo); err != nil {
 		return nil, err
 	}
-	return map[string]any{"last_run": lastRun, "active_run": activeRun, "due_count": dueCount, "watches": watches, "item_counts": counts, "setup": setup}, nil
+	pending, err := pendingInputCount(ctx, a.Store.DB)
+	if err != nil {
+		return nil, err
+	}
+	return map[string]any{"last_run": lastRun, "active_run": activeRun, "due_count": dueCount, "pending_input_count": pending, "watches": watches, "item_counts": counts, "setup": setup}, nil
 }

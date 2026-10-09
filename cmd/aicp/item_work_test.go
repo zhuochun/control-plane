@@ -37,6 +37,15 @@ func TestItemWorkCommandAndDelegationFilters(t *testing.T) {
 	}
 	cmd = command()
 	cmd.SetOut(io.Discard)
+	cmd.SetArgs([]string{"--server", server.URL, "--json", "item", "process-input", "item-1", "--file", file})
+	if err := cmd.Execute(); err != nil {
+		t.Fatal(err)
+	}
+	if path != "/api/v1/items/item-1/inputs/process" || method != "POST" || !strings.Contains(body, `"expected_content_version":2`) {
+		t.Fatalf("bad processing command: %s %s %s", method, path, body)
+	}
+	cmd = command()
+	cmd.SetOut(io.Discard)
 	cmd.SetArgs([]string{"--server", server.URL, "--json", "item", "list", "--executor", "agent:A & B", "--external-ref", "session:1?&", "--delegation-status", "pending,blocked"})
 	if err := cmd.Execute(); err != nil {
 		t.Fatal(err)

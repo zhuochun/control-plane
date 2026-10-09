@@ -37,6 +37,15 @@ type workInput struct {
 	ItemID string             `json:"item_id"`
 	Update app.UpdateItemWork `json:"update"`
 }
+type processInput struct {
+	ItemID string               `json:"item_id"`
+	Input  app.ProcessItemInput `json:"input"`
+}
+type inputHistory struct {
+	ItemID  string `json:"item_id"`
+	InputID string `json:"input_id,omitempty"`
+	Offset  int    `json:"offset,omitempty"`
+}
 type itemID struct {
 	ItemID string `json:"item_id"`
 }
@@ -214,6 +223,21 @@ func New(serverURL, version string) *mcp.Server {
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "update_item_work", InputSchema: reportInputSchema[workInput](), Description: "Update an assigned Item without a Run: replace report/context, add evidence, and merge delegations by ID. Read get_item first; preserve prior conclusions, report actions, and continuation context. Omitted fields retain content; empty lists remove nothing. Executor patches should omit external_ref and leave delivery pending for primary review. Identify the input version and requirements actually used. On content_conflict, reread, merge, and retry with current expected_content_version and a new request_id; reuse IDs only for identical uncertain retries. Does not change provenance, relevance or user state."}, func(ctx context.Context, _ *mcp.CallToolRequest, input workInput) (*mcp.CallToolResult, map[string]any, error) {
 		value, err := caller.call(ctx, http.MethodPatch, "/items/"+url.PathEscape(input.ItemID)+"/work", input.Update)
+		return respond(value, err)
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "process_item_input", InputSchema: reportInputSchema[processInput](), Description: "Handle exact captured user input on an active Run. Read all chronological user_inputs pages, current Item and relevant prior input history first. Save result_md and outcome: responded, incorporated, follow_up, blocked or failed. Failures appear on the Item and remain pending; success clears only the exact captured note. May update inbox relevance or archive its capture without changing ownership. Use owning configuration commands and retain durable result references before handling success. Supply current content/state versions; reread on conflict. Reuse request_id only for identical uncertain retries."}, func(ctx context.Context, _ *mcp.CallToolRequest, input processInput) (*mcp.CallToolResult, map[string]any, error) {
+		value, err := caller.call(ctx, http.MethodPost, "/items/"+url.PathEscape(input.ItemID)+"/inputs/process", input.Input)
+		return respond(value, err)
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "get_item_inputs", Description: "Read bounded original user inputs in chronological order with latest attempt summaries/counts. Follow next_offset. Use get_input_attempts for complete paged attempt history. Reading does not process input."}, func(ctx context.Context, _ *mcp.CallToolRequest, input inputHistory) (*mcp.CallToolResult, map[string]any, error) {
+		value, err := caller.call(ctx, http.MethodGet, "/items/"+url.PathEscape(input.ItemID)+"/inputs?offset="+strconv.Itoa(input.Offset), nil)
+		return respond(value, err)
+	})
+	mcp.AddTool(server, &mcp.Tool{Name: "get_input_attempts", Description: "Read complete processing attempt history for an exact Item/input pair in bounded chronological pages. Follow next_offset; reads have no processing effects."}, func(ctx context.Context, _ *mcp.CallToolRequest, input inputHistory) (*mcp.CallToolResult, map[string]any, error) {
+		if input.InputID == "" {
+			return respond(nil, app.Invalid("input_id is required"))
+		}
+		value, err := caller.call(ctx, http.MethodGet, "/items/"+url.PathEscape(input.ItemID)+"/inputs/"+url.PathEscape(input.InputID)+"/attempts?offset="+strconv.Itoa(input.Offset), nil)
 		return respond(value, err)
 	})
 	mcp.AddTool(server, &mcp.Tool{Name: "list_items", Description: "Find current Items by exact dedupe key, Watcher, Interest, literal text, or view before reconciling source evidence. Returns a bounded page and continuation. Shared source URLs do not imply a shared matter. Read full current state before updating."}, func(ctx context.Context, _ *mcp.CallToolRequest, input itemLookup) (*mcp.CallToolResult, map[string]any, error) {

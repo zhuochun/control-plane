@@ -348,7 +348,7 @@ func TestVersionSixStartReceiptReplaysNewCapturedContract(t *testing.T) {
 		t.Fatal(err)
 	}
 	// Model the old schema as well as its version marker.
-	for _, table := range []string{"item_answers", "review_artifacts", "review_formats"} {
+	for _, table := range []string{"input_attempts", "item_inputs", "item_answers", "review_artifacts", "review_formats"} {
 		if _, err = s.DB.ExecContext(ctx, "DROP TABLE "+table); err != nil {
 			t.Fatal(err)
 		}

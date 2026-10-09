@@ -238,7 +238,7 @@ test(
     });
     expect(created.ok()).toBeTruthy();
 
-    await page.goto("http://127.0.0.1:7331/");
+    await page.goto("/");
     await page
       .locator(".queue-row").filter({hasText:"Confirm the rollout sequence"})
       .click();
@@ -305,7 +305,7 @@ test(
     });
     expect(response.ok()).toBeTruthy();
 
-    await page.goto("http://127.0.0.1:7331/");
+    await page.goto("/");
     await page.getByRole("link", {name:"1 proposal to review",exact:true}).click();
     await expect(page.getByText("Useful signal:")).toBeVisible();
     await page.getByRole("button", { name: "Review proposal" }).click();
@@ -410,7 +410,7 @@ test(
     ],
   },
   async ({ page, request }) => {
-    await page.goto("http://127.0.0.1:7331/preferences");
+    await page.goto("/preferences");
     await expect(
       page.getByRole("heading", { name: "Preferences" }),
     ).toBeVisible();

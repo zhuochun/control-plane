@@ -175,6 +175,8 @@ func (a *App) BriefPage(ctx context.Context, cursor string) (map[string]any, err
 			}
 			var page map[string]any
 			switch decoded.Collection {
+			case "user_inputs":
+				page, err = contextPage(decoded.RunID, decoded.Collection, snapshot.UserInputs, decoded.Offset, contextContinuationPageSize)
 			case "interests":
 				run, readErr := a.Run(ctx, decoded.RunID)
 				if readErr != nil {
@@ -208,6 +210,11 @@ func (a *App) BriefPage(ctx context.Context, cursor string) (map[string]any, err
 	now := a.Now().UTC()
 	millis := now.UnixMilli()
 	result := map[string]any{"now": now, "consistency": "live", "active_run": nil, "last_run": nil}
+	inputCount, err := pendingInputCount(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	result["pending_input_count"] = inputCount
 	for _, collection := range []string{"focus", "due_watches", "unresolved_failures"} {
 		page, err := liveBriefCollection(ctx, tx, collection, 0, millis)
 		if err != nil {

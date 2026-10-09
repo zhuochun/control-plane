@@ -1,6 +1,6 @@
 import path from "node:path";
 import { readFileSync, writeFileSync } from "node:fs";
-import { MCPClient } from "../../scripts/testing/owned-server.mjs";
+import { MCPClient, baseURL } from "../../scripts/testing/owned-server.mjs";
 import { run } from "../../scripts/testing/process.mjs";
 import { root } from "../../scripts/testing/build.mjs";
 import { JourneyRecord } from "../../scripts/testing/observations.mjs";
@@ -18,7 +18,7 @@ export async function cli(server: any, args: string[], input?: object) {
     writeFileSync(file, JSON.stringify(input));
     args = [...args, "--file", file];
   }
-  const result = await run(server.binary, [...args, "--json"], {
+  const result = await run(server.binary, ["--server",baseURL,...args, "--json"], {
     env: server.environment(),
     timeout: 10_000,
   });

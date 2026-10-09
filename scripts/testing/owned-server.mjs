@@ -6,17 +6,19 @@ import path from "node:path";
 import { binary as defaultBinary, digest } from "./build.mjs";
 import { readFileSync } from "node:fs";
 
-export const baseURL = "http://127.0.0.1:7331";
+export const port = Number(process.env.AICP_TEST_PORT ?? 7331);
+if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error("AICP_TEST_PORT must be an integer from 1 to 65535");
+export const baseURL = `http://127.0.0.1:${port}`;
 const wait = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 export async function assertFreePort() {
   await new Promise((resolve, reject) => {
-    const socket = createConnection({ host: "127.0.0.1", port: 7331 });
+    const socket = createConnection({ host: "127.0.0.1", port });
     socket.setTimeout(1000);
     socket.once("connect", () => {
       socket.destroy();
       reject(
         new Error(
-          "Inconclusive: port 7331 occupied; stop your own server before testing.",
+          `Inconclusive: port ${port} occupied; select a free AICP_TEST_PORT before testing.`,
         ),
       );
     });
@@ -63,6 +65,8 @@ export class OwnedServer {
   }
   environment() {
     const env = { ...process.env };
+    env.AICP_SERVER_URL = baseURL;
+    env.AICP_DATA_DIR = this.data;
     delete env.AICP_PLANTUML_JAR;
     delete env.AICP_TEST_PLANTUML_JAR;
     if (this.profile === "renderer")
@@ -72,7 +76,7 @@ export class OwnedServer {
   async start() {
     await assertFreePort();
     let log = "";
-    const child = spawn(this.binary, ["serve", "--data-dir", this.data], {
+    const child = spawn(this.binary, ["serve", "--data-dir", this.data, "--port", String(port)], {
       env: this.environment(),
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
@@ -182,7 +186,7 @@ export class MCPClient {
     this.pending = new Map();
     this.nextID = 0;
     this.raw = [];
-    this.child = spawn(server.binary, ["mcp"], {
+    this.child = spawn(server.binary, ["mcp", "--server", baseURL], {
       env: server.environment(),
       windowsHide: true,
       stdio: ["pipe", "pipe", "pipe"],

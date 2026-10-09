@@ -36,7 +36,9 @@ There is no automatic changed-file selection yet: local selection is explicit,
 and PR/main CI discovers and runs complete sets.
 
 Every journey has a fresh database; focused UI cases share their owned worker
-server. Port 7331 must be free. The fixtures refuse an occupied port, prove the
+server. Port 7331 must be free, or set `AICP_TEST_PORT` to a free loopback port
+to preserve a running installation. `aicp serve --port` retains loopback-only
+binding and defaults to 7331. The fixtures refuse an occupied port, prove the
 owned child emitted readiness, capture its binary digest/PID, and stop only owned
 children. Restart steps use a fresh PID and consumer. Optional renderer variables
 are cleared for core tests, and the runner clears any inherited executable override.

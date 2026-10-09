@@ -203,7 +203,7 @@ func TestRunSelectionAndChangeAcknowledgement(t *testing.T) {
 		t.Fatal(err)
 	}
 	var acknowledged string
-	if err = s.DB.QueryRow(`SELECT value FROM settings WHERE key='acknowledged_event_seq'`).Scan(&acknowledged); err != nil || acknowledged != "2" {
+	if err = s.DB.QueryRow(`SELECT value FROM settings WHERE key='acknowledged_event_seq'`).Scan(&acknowledged); err != nil || acknowledged != fmt.Sprint(second.Run.ThroughSeq) {
 		t.Fatalf("change cursor not advanced: %s %v", acknowledged, err)
 	}
 	now = now.Add(time.Minute)

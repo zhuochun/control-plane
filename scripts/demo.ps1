@@ -1,6 +1,7 @@
 [CmdletBinding()]
 param(
-    [string]$Executable = (Join-Path $PSScriptRoot '..\dist\aicp.exe')
+    [string]$Executable = (Join-Path $PSScriptRoot '..\dist\aicp.exe'),
+    [ValidateRange(1,65535)][int]$Port = 7331
 )
 
 $ErrorActionPreference = 'Stop'
@@ -12,6 +13,7 @@ New-Item -ItemType Directory -Path $demoDirectory | Out-Null
 $requestDirectory = Join-Path $demoDirectory 'requests'
 New-Item -ItemType Directory -Path $requestDirectory | Out-Null
 $serverLog = Join-Path $demoDirectory 'server.log'
+$demoBaseUrl = 'http://127.0.0.1:{0}' -f $Port
 
 function Write-Request {
     param([string]$Name, [object]$Value)
@@ -22,17 +24,22 @@ function Write-Request {
 
 function Invoke-Aicp {
     param([string[]]$CommandArguments)
-    $output = & $resolvedExecutable @CommandArguments 2>&1
+    $output = & $resolvedExecutable --server $demoBaseUrl @CommandArguments 2>&1
     if ($LASTEXITCODE -ne 0) { throw "aicp $($CommandArguments -join ' ') failed: $output" }
     return ($output -join "`n") | ConvertFrom-Json
 }
 
-$server = Start-Process -FilePath $resolvedExecutable -ArgumentList @('serve', '--data-dir', ('"{0}"' -f $demoDirectory)) -RedirectStandardError $serverLog -WindowStyle Hidden -PassThru
+$server = Start-Process -FilePath $resolvedExecutable -ArgumentList @('serve', '--port', [string]$Port, '--data-dir', ('"{0}"' -f $demoDirectory)) -RedirectStandardError $serverLog -WindowStyle Hidden -PassThru
 try {
     $ready = $false
     foreach ($attempt in 1..50) {
         if ($server.HasExited) { throw "demo server exited early; see $serverLog" }
-        try { Invoke-RestMethod -Uri 'http://127.0.0.1:7331/healthz' -TimeoutSec 1 | Out-Null; $ready = $true; break } catch { Start-Sleep -Milliseconds 100 }
+        $demoLog = ''
+        if (Test-Path -LiteralPath $serverLog) { $demoLog = [string](Get-Content -LiteralPath $serverLog -Encoding UTF8 -Raw) }
+        if ($demoLog -and $demoLog.Contains('aicp is ready')) {
+            try { Invoke-RestMethod -Uri ($demoBaseUrl + '/healthz') -TimeoutSec 1 | Out-Null; $ready = $true; break } catch { }
+        }
+        Start-Sleep -Milliseconds 100
     }
     if (-not $ready) { throw 'demo server did not become ready' }
 

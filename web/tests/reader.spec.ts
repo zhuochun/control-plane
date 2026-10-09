@@ -549,7 +549,7 @@ test(
     ).toBeVisible();
     await expect(note).toHaveValue("Keep this follow-up");
     await page.getByRole("button", { name: "Save note", exact: true }).click();
-    await expect(page.getByRole("status")).toHaveText("Note saved.");
+    await expect(page.locator(".reader-note").getByRole("status")).toHaveText("Note saved.");
   },
 );
 
@@ -641,7 +641,7 @@ test(
       .click();
     await expect(note).toHaveValue("Keep this draft while I compare findings.");
     await page.getByRole("button", { name: "Save note", exact: true }).click();
-    await expect(page.getByRole("status")).toHaveText("Note saved.");
+    await expect(page.locator(".reader-note").getByRole("status")).toHaveText("Note saved.");
     expect(
       (await (await request.get("/api/v1/items/" + first.id)).json()).user_note,
     ).toBe("Keep this draft while I compare findings.");
@@ -706,7 +706,7 @@ test(
     ).toBeEnabled();
     await expect(note).toHaveValue("Newer draft typed during save");
     await page.getByRole("button", { name: "Save note", exact: true }).click();
-    await expect(page.getByRole("status")).toHaveText("Note saved.");
+    await expect(page.locator(".reader-note").getByRole("status")).toHaveText("Note saved.");
     expect(
       (await (await request.get("/api/v1/items/" + item.id)).json()).user_note,
     ).toBe("Newer draft typed during save");

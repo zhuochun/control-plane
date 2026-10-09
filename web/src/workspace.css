@@ -1238,3 +1238,9 @@ fieldset.review-field {
     padding: 10px;
   }
 }
+/* Immutable user submissions remain readable beside the current note editor. */
+.reader-input-history { margin-bottom: 1rem; }
+.reader-input-history details { margin-top: .75rem; }
+.reader-input-history summary { cursor: pointer; }
+.reader-input-record { margin: .75rem 0; padding: .75rem; border: 1px solid var(--border, #ddd); border-radius: .5rem; overflow-wrap: anywhere; }
+.reader-input-text { white-space: pre-wrap; margin: .5rem 0; }

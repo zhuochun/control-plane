@@ -108,7 +108,10 @@ func completeItem(ctx context.Context, db querier, item Item) (Item, error) {
 		return item, err
 	}
 	err = db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM item_answers WHERE item_id=?)", item.ID).Scan(&item.AnswerHistoryAvailable)
-	return item, err
+	if err != nil {
+		return item, err
+	}
+	return completeInputState(ctx, db, item)
 }
 
 func snapshotAnswer(field ReportBlock, value AnswerValue) (SavedAnswerValue, error) {

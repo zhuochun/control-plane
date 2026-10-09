@@ -108,13 +108,21 @@ func inspectionContext(snapshot runContextSnapshot, run Run, more int, changes [
 	if next != "" {
 		continuations["changes"] = next
 	}
+	inputPage, err := contextPage(run.ID, "user_inputs", snapshot.UserInputs, 0, contextPageSize)
+	if err != nil {
+		return nil, err
+	}
+	if cursor, ok := inputPage["next_cursor"]; ok {
+		continuations["user_inputs"] = cursor
+	}
 	watches := append([]SelectedWatch{}, run.SelectedWatches...)
 	for i := range watches {
 		watches[i].RelatedItems = nil
 	}
 	return map[string]any{
 		"contexts": snapshot.Contexts, "watches": watches, "interests": page["items"], "changes": changes,
-		"overview": runOverview(snapshot, run, more), "continuations": continuations,
+		"user_inputs": inputPage,
+		"overview":    runOverview(snapshot, run, more), "continuations": continuations,
 		"available": map[string]any{"attention": map[string]any{"count": len(snapshot.Attention), "cursor": encodeContextCursor(contextCursor{RunID: run.ID, Collection: "attention_items"})}},
 	}, nil
 }

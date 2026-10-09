@@ -14,6 +14,75 @@ import (
 	"github.com/pressly/goose/v3"
 )
 
+func TestUserInputMigrationFromVersion10(t *testing.T) {
+	ctx := context.Background()
+	dir := t.TempDir()
+	db, err := sql.Open("sqlite", filepath.Join(dir, "aicp.db"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	source, err := fs.Sub(migrations, "migrations")
+	if err != nil {
+		t.Fatal(err)
+	}
+	provider, err := goose.NewProvider(goose.DialectSQLite3, db, source, goose.WithGoMigrations(
+		goose.NewGoMigration(6, &goose.GoFunc{RunTx: migrateAttentionSnapshots}, nil),
+		goose.NewGoMigration(7, &goose.GoFunc{RunTx: migrateInspectionReceipts}, nil),
+		goose.NewGoMigration(8, &goose.GoFunc{RunTx: migrateDelegationGuidance}, nil),
+		goose.NewGoMigration(9, &goose.GoFunc{RunTx: migrateDelegationHandoffGuidance}, nil)))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = provider.UpTo(ctx, 10); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, `INSERT INTO items(id,dedupe_key,kind,title,summary,content,content_version,content_hash,todo_state,user_note,state_version,created_at,content_updated_at,state_updated_at,origin) VALUES('inbox','user:legacy','note','Original title','Original summary',?,3,'hash','done',?,7,100,200,300,'user')`, `{"sources":[],"report":{"schema_version":1,"body_md":"原始 reference"}}`, "Guide the next attempt"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, `UPDATE settings SET value='Custom owner guidance' WHERE key='agents_md'`); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = db.ExecContext(ctx, `INSERT INTO runs(id,runner_label,status,started_at,lease_expires_at,selected_watches,after_seq,through_seq,context_snapshot) VALUES('old-run','agent','running',100,0,'[]',0,0,'{"contexts":{},"interests":[],"attention_items":[]}')`); err != nil {
+		t.Fatal(err)
+	}
+	if err = db.Close(); err != nil {
+		t.Fatal(err)
+	}
+	s, err := Open(ctx, dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := s.Close(); err != nil {
+			t.Error(err)
+		}
+	})
+	var count int
+	if err = s.DB.QueryRowContext(ctx, "SELECT count(*) FROM item_inputs WHERE item_id='inbox' AND status='pending'").Scan(&count); err != nil || count != 2 {
+		t.Fatalf("legacy pending count %d: %v", count, err)
+	}
+	var text, original, guidance, todo, note, snapshot string
+	var state int
+	if err = s.DB.QueryRowContext(ctx, "SELECT text,original FROM item_inputs WHERE kind='inbox'").Scan(&text, &original); err != nil {
+		t.Fatal(err)
+	}
+	if text != "原始 reference" || !strings.Contains(original, "Original title") {
+		t.Fatalf("original lost: %s %s", text, original)
+	}
+	if err = s.DB.QueryRowContext(ctx, "SELECT value FROM settings WHERE key='agents_md'").Scan(&guidance); err != nil || guidance != "Custom owner guidance" {
+		t.Fatalf("custom guidance replaced: %s %v", guidance, err)
+	}
+	if err = s.DB.QueryRowContext(ctx, "SELECT todo_state,user_note,state_version FROM items WHERE id='inbox'").Scan(&todo, &note, &state); err != nil || todo != "done" || note != "Guide the next attempt" || state != 7 {
+		t.Fatalf("user state changed: %s %s %d %v", todo, note, state, err)
+	}
+	if err = s.DB.QueryRowContext(ctx, "SELECT context_snapshot FROM runs WHERE id='old-run'").Scan(&snapshot); err != nil || strings.Contains(snapshot, "user_inputs") {
+		t.Fatalf("old Run retrofitted: %s %v", snapshot, err)
+	}
+	if err = s.DB.QueryRowContext(ctx, "SELECT value FROM settings WHERE key='default_agents_md'").Scan(&guidance); err != nil || !strings.Contains(guidance, "process_item_input") {
+		t.Fatalf("new default missing: %s %v", guidance, err)
+	}
+}
+
 func TestAttentionSnapshotMigrationFromVersion5(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -82,7 +151,7 @@ VALUES('preserved-item','preserved','report','Preserved','Original',?,1,'hash','
 		}
 	})
 	var version int64
-	if err = opened.DB.QueryRowContext(ctx, `SELECT max(version_id) FROM goose_db_version WHERE is_applied=1`).Scan(&version); err != nil || version != 10 {
+	if err = opened.DB.QueryRowContext(ctx, `SELECT max(version_id) FROM goose_db_version WHERE is_applied=1`).Scan(&version); err != nil || version != 11 {
 		t.Fatalf("schema version %d: %v", version, err)
 	}
 	var content, todo, note, preservedSnapshot string

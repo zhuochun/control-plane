@@ -21,6 +21,7 @@ import { api } from "./api";
 import { type Item, parseMetric, ReminderDialog, useItemAction } from "./items";
 import { MetricChart } from "./metric-chart";
 import { formatDateTime, useSettings } from "./settings";
+import { ItemInputs } from "./item-inputs";
 
 export function attentionReasons(item: Item) {
   return [
@@ -54,15 +55,20 @@ export function ItemReader({
   const query = useQuery({
     queryKey: ["item", itemId],
     queryFn: () => api<Item>("/items/" + itemId),
+    refetchInterval: 5000,
   });
   const [reminder, setReminder] = useState(false);
   const [reminderMenu, setReminderMenu] = useState<HTMLElement | null>(null);
   const noteRequest = useRef<{ signature: string; id: string } | null>(null);
+  const noteVersion = useRef<{ itemId: string; version: number; text: string; inputId?: string } | null>(null);
   const { apply, mutation } = useItemAction(itemId, () => setReminder(false));
   const saveNote = useMutation({
     mutationFn: (input: { item: Item; value: string }) => {
+      const base = noteVersion.current;
+      const sameNote = base?.text === input.item.user_note && base?.inputId === input.item.pending_inputs?.find(entry => entry.kind === "note")?.id;
+      const version = !base || base.itemId !== itemId || sameNote ? input.item.state_version : base.version;
       const signature = JSON.stringify({
-        version: input.item.state_version,
+        version,
         note: input.value,
       });
       if (noteRequest.current?.signature !== signature)
@@ -71,7 +77,7 @@ export function ItemReader({
         "/items/" + itemId + "/note",
         {
           request_id: noteRequest.current.id,
-          expected_state_version: input.item.state_version,
+          expected_state_version: version,
           user_note: input.value,
         },
         "PUT",
@@ -80,6 +86,7 @@ export function ItemReader({
     onSuccess: (updated, input) => {
       cache.setQueryData(["item", updated.id], updated);
       cache.invalidateQueries({ queryKey: ["items"] });
+      noteVersion.current = null;
       savedNote(input.value);
     },
     onError: () => {
@@ -293,12 +300,14 @@ export function ItemReader({
             </section>
           </>
         )}
+        {item && <ItemInputs item={item} timezone={settings.data?.timezone} />}
       </div>
       {item && (
         <form
           className="reader-note"
           onSubmit={(event) => {
             event.preventDefault();
+            if (saveNote.isError) noteVersion.current = { itemId, version: item.state_version, text: item.user_note, inputId: item.pending_inputs?.find(entry => entry.kind === "note")?.id };
             if (note !== null) saveNote.mutate({ item, value: note });
           }}
         >
@@ -323,6 +332,7 @@ export function ItemReader({
               placeholder="Keep context for the next run…"
               value={note ?? item.user_note}
               onChange={(event) => {
+                if (note === null || noteVersion.current?.itemId !== itemId) noteVersion.current = { itemId, version: item.state_version, text: item.user_note, inputId: item.pending_inputs?.find(entry => entry.kind === "note")?.id };
                 setNote(event.target.value);
                 if (!saveNote.isPending) saveNote.reset();
               }}

@@ -382,12 +382,7 @@ test(
     await cli(server, ["run", "submit", watch.id], publish2);
     // Replay before finish proves the unchanged terminal submission is idempotent.
     const replay = await cli(server, ["run", "submit", watch.id], publish2);
-    await cli(server, [
-      "run",
-      "finish",
-      "--summary",
-      "Reconciled completed source review.",
-    ]);
+    // Observe source publication independently of explicit note processing.
     const final = await cli(server, ["item", "get", item.id]);
     report.check(
       "I3",
@@ -412,10 +407,21 @@ test(
         checkpoint: (await cli(server, ["watch", "get", watch.id])).cursor,
       },
     );
+    const active = await cli(server,["brief"]);
+    const noteInput = final.pending_inputs.find((entry: { kind: string }) => entry.kind === "note");
+    expect(noteInput.text).toBe("Check again next week.");
+    await cli(server,["item","process-input",item.id],{
+      run_id:active.active_run.id,input_id:noteInput.id,
+      expected_content_version:final.content_version,expected_state_version:final.state_version,
+      outcome:"incorporated",result_md:"Retained user guidance for the next source review: Check again next week.",
+    });
+    await cli(server,["run","finish","--summary","Reconciled source review and retained user guidance."]);
     await page.reload();
     await expect(
       page.getByRole("textbox", { name: "Your note", exact: true }),
-    ).toHaveValue("Check again next week.");
+    ).toHaveValue("");
+    await page.getByText("Prior notes and inbox submissions",{exact:true}).click();
+    await expect(page.locator(".reader-input-history")).toContainText("Check again next week.");
     await expect(
       page.getByRole("button", { name: "Mark Done", exact: true }),
     ).toBeVisible();

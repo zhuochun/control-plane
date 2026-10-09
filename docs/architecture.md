@@ -54,6 +54,15 @@ PlantUML needs a compatible Java runtime (the tested JAR requires Java 11 or
 newer) on PATH and an absolute `AICP_PLANTUML_JAR` path. When unavailable, source
 remains readable. No external rendering service is contacted.
 
+User notes and inbox intake are owned by `internal/app/item_inputs.go` and the
+[input-processing contract](specs/20261008-user-input-processing-spec.md).
+Immutable input revisions and attempts are separate from agent content and
+user Todo state. Runs capture pending input regardless of Attention or Watcher
+eligibility. `process_item_input` / `aicp item process-input` atomically save a
+visible result, handling receipt and exact input disposition; Finish enforces
+accounting. Configuration changes retain their own transaction/receipt owners.
+The reader's `item-inputs.tsx` presents originals, prior notes and failures.
+
 At startup the server renders a small diagram through the same bounded sandbox
 used for previews. `plantuml_available` is true only if that check succeeds;
 `plantuml_setup` provides platform-specific instructions through HTTP, CLI, and
@@ -140,9 +149,9 @@ For normal iteration use [the verification runner](../scripts/testing/README.md)
 The runner prepares locked dependencies, frontend assets, the executable and
 Chromium as needed, validating input and output digests before reuse. System
 results always execute again. Fixtures own their server and database; port 7331
-must be free. Each E2E journey starts with a fresh database. Focused UI cases share
+or the selected `AICP_TEST_PORT` must be free. Each E2E journey starts with a fresh database. Focused UI cases share
 one worker server. `scripts/demo.ps1` remains a standalone CLI demonstration,
-including its optional executable parameter; the automated inspection journey
+  including its optional executable and loopback port parameters; the automated inspection journey
 retains its two-cycle assertions and adds portal-owned notes and request replay.
 
 `scripts/check-go.ps1` is the focused Go quality gate. It checks the pinned

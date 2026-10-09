@@ -1,4 +1,5 @@
 import { defineConfig } from "@playwright/test";
+import { baseURL } from "../scripts/testing/owned-server.mjs";
 
 export default defineConfig({
   testDir: "./tests",
@@ -16,7 +17,7 @@ export default defineConfig({
       ? undefined
       : /@profile:renderer/,
   use: {
-    baseURL: "http://127.0.0.1:7331",
+    baseURL,
     trace: "retain-on-failure",
     viewport: { width: 1440, height: 1000 },
     locale: "en-US",

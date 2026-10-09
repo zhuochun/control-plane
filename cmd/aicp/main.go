@@ -105,7 +105,11 @@ GETTING_STARTED.md for the full agent-assisted path.`, SilenceUsage: true, Silen
 		_, err = fmt.Fprintln(cmd.OutOrStdout(), string(pretty))
 		return err
 	}
+	var servePort int
 	serve := &cobra.Command{Use: "serve", Short: "Serve the local portal", RunE: func(cmd *cobra.Command, args []string) error {
+		if servePort < 1 || servePort > 65535 {
+			return fmt.Errorf("port must be between 1 and 65535")
+		}
 		s, err := store.Open(cmd.Context(), dataDir)
 		if err != nil {
 			return err
@@ -115,9 +119,10 @@ GETTING_STARTED.md for the full agent-assisted path.`, SilenceUsage: true, Silen
 				slog.Error("close store", "error", err)
 			}
 		}()
-		listener, err := net.Listen("tcp", "127.0.0.1:7331")
+		address := fmt.Sprintf("127.0.0.1:%d", servePort)
+		listener, err := net.Listen("tcp", address)
 		if err != nil {
-			return fmt.Errorf("listen on 127.0.0.1:7331 (another service may be using the port): %w", err)
+			return fmt.Errorf("listen on %s (another service may be using the port): %w", address, err)
 		}
 		srv := &http.Server{Handler: httpapi.New(app.New(s), web.Handler(), version), ReadHeaderTimeout: 5 * time.Second, IdleTimeout: 60 * time.Second}
 		stopped := make(chan struct{})
@@ -128,7 +133,7 @@ GETTING_STARTED.md for the full agent-assisted path.`, SilenceUsage: true, Silen
 			defer cancel()
 			_ = srv.Shutdown(shutdownCtx)
 		}()
-		slog.Info("aicp is ready", "url", "http://127.0.0.1:7331")
+		slog.Info("aicp is ready", "url", "http://"+address)
 		err = srv.Serve(listener)
 		if !errors.Is(err, http.ErrServerClosed) {
 			return err
@@ -136,6 +141,7 @@ GETTING_STARTED.md for the full agent-assisted path.`, SilenceUsage: true, Silen
 		<-stopped
 		return nil
 	}}
+	serve.Flags().IntVar(&servePort, "port", 7331, "Local loopback port (1-65535)")
 	root.AddCommand(serve)
 	root.AddCommand(&cobra.Command{Use: "init", Args: cobra.NoArgs, Short: "Initialize local data and default agent guidance", RunE: func(cmd *cobra.Command, args []string) error {
 		s, err := store.Open(cmd.Context(), dataDir)

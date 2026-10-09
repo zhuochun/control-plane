@@ -66,6 +66,8 @@ type ItemContent struct {
 }
 
 type Item struct {
+	PendingInputs              []UserInput    `json:"pending_inputs,omitempty"`
+	InboxArchived              bool           `json:"inbox_archived"`
 	ID                         string         `json:"id"`
 	DedupeKey                  string         `json:"dedupe_key"`
 	Kind                       string         `json:"kind"`
@@ -472,6 +474,11 @@ func (a *App) putItemTx(ctx context.Context, tx *sql.Tx, id string, input PutIte
 		if err != nil {
 			return nil, err
 		}
+		if origin == "user" && current.Kind == "note" && current.WatchID == nil {
+			if err = insertInput(ctx, tx, current, "inbox", current.Report.BodyMD, now); err != nil {
+				return nil, err
+			}
+		}
 		return current, a.event(ctx, tx, origin, "item", id, "item.created", map[string]any{"content_version": 1})
 	}
 	if id != "" && id != current.ID {
@@ -585,6 +592,10 @@ func (a *App) itemWhere(ctx context.Context, filter ItemFilters) (string, []any,
 		args = append(args, pattern, pattern, pattern, pattern)
 	}
 	switch filter.View {
+	case "inbox":
+		query += " AND EXISTS (SELECT 1 FROM item_inputs ui WHERE ui.item_id=items.id AND (ui.status='pending' OR (ui.kind='inbox' AND ui.archived=0)))"
+	case "archived":
+		query += " AND EXISTS (SELECT 1 FROM item_inputs ui WHERE ui.item_id=items.id AND ui.archived=1)"
 	case "attention":
 		query += " AND " + attentionPredicate
 		args = append(args, a.Now().UTC().UnixMilli())
@@ -594,7 +605,7 @@ func (a *App) itemWhere(ctx context.Context, filter ItemFilters) (string, []any,
 		query += " AND todo_state='done'"
 	case "", "all":
 	default:
-		return "", nil, Invalid("view must be attention, todo, done, or all")
+		return "", nil, Invalid("view must be attention, todo, done, inbox, archived, or all")
 	}
 	return query, args, nil
 }

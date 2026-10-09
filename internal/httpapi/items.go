@@ -53,5 +53,30 @@ func itemRoutes(mux *http.ServeMux, a *app.App) {
 		return a.SetUserNote(r.Context(), r.PathValue("id"), input)
 	}))
 	mux.HandleFunc("GET /api/v1/items/{id}/history", read(func(r *http.Request) (any, error) { return a.ItemHistory(r.Context(), r.PathValue("id")) }))
+	mux.HandleFunc("POST /api/v1/items/{id}/inputs/process", command(func(r *http.Request, input app.ProcessItemInput) (any, error) {
+		return a.ProcessItemInput(r.Context(), r.PathValue("id"), input)
+	}))
+	mux.HandleFunc("GET /api/v1/items/{id}/inputs", read(func(r *http.Request) (any, error) {
+		offset := 0
+		if value := r.URL.Query().Get("offset"); value != "" {
+			var err error
+			offset, err = strconv.Atoi(value)
+			if err != nil || offset < 0 {
+				return nil, app.Invalid("offset must be nonnegative")
+			}
+		}
+		return a.InputHistory(r.Context(), r.PathValue("id"), offset)
+	}))
 	mux.HandleFunc("GET /api/v1/items/{id}/context", read(func(r *http.Request) (any, error) { return a.ItemContext(r.Context(), r.PathValue("id")) }))
+	mux.HandleFunc("GET /api/v1/items/{id}/inputs/{input_id}/attempts", read(func(r *http.Request) (any, error) {
+		offset := 0
+		if value := r.URL.Query().Get("offset"); value != "" {
+			var err error
+			offset, err = strconv.Atoi(value)
+			if err != nil || offset < 0 {
+				return nil, app.Invalid("offset must be nonnegative")
+			}
+		}
+		return a.InputAttempts(r.Context(), r.PathValue("id"), r.PathValue("input_id"), offset)
+	}))
 }

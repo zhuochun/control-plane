@@ -193,4 +193,24 @@ func TestItemLookupAndCapturedAttentionThroughMCP(t *testing.T) {
 		t.Fatal("full limitations unavailable on demand")
 	}
 	call("finish_run", map[string]any{"run_id": started["run"].(map[string]any)["id"], "summary": "Only requested source scope"})
+	inputRaw, err := a.PutItem(ctx, "", app.PutItem{DedupeKey: "user:mcp-input", Kind: "note", Title: "MCP inbox", Summary: "Capture", Report: app.Report{SchemaVersion: 1, BodyMD: "Reference capture"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	var inboxItem app.Item
+	if err = json.Unmarshal(inputRaw, &inboxItem); err != nil {
+		t.Fatal(err)
+	}
+	current := call("get_item", map[string]any{"item_id": inboxItem.ID})
+	inputRun := call("start_run", map[string]any{"watch_ids": []string{}})
+	entry := current["pending_inputs"].([]any)[0].(map[string]any)
+	handled := call("process_item_input", map[string]any{"item_id": inboxItem.ID, "input": map[string]any{"run_id": inputRun["run"].(map[string]any)["id"], "input_id": entry["id"], "expected_content_version": current["content_version"], "expected_state_version": current["state_version"], "outcome": "responded", "result_md": "Reference saved on the Item", "archive": true}})
+	if handled["inbox_archived"] != true {
+		t.Fatalf("MCP processing failed: %#v", handled)
+	}
+	history := call("get_item_inputs", map[string]any{"item_id": inboxItem.ID})
+	if len(history["items"].([]any)) != 1 {
+		t.Fatalf("MCP original history missing: %#v", history)
+	}
+	call("finish_run", map[string]any{"run_id": inputRun["run"].(map[string]any)["id"], "summary": "Handled capture"})
 }

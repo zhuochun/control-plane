@@ -93,3 +93,12 @@ export const journey = base.extend<{ ownedServer: OwnedServer }>({
   ],
 });
 export { expect };
+
+// Input lifecycle cases need a fresh capture boundary, without a journey golden.
+export const isolated = base.extend<{ ownedServer: OwnedServer }>({
+  ownedServer: [async ({}, use, info) => {
+    const server = new OwnedServer();
+    try { await server.start(); await use(server); }
+    finally { await server.close({ diagnostics: info.outputPath("input-processes") }); }
+  }, { auto: true }],
+});

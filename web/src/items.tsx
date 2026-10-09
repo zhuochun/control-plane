@@ -42,7 +42,21 @@ export type ReportAction = {
   source_ref?: string;
   state?: string;
 };
+export type UserInput = {
+	 attempt_count: number;
+  id: string;
+  item_id: string;
+  kind: "note" | "inbox";
+  text: string;
+  original: { title?: string; sources?: Source[]; legacy?: boolean };
+  submitted_at: string;
+  status: "pending" | "processed" | "superseded" | "withdrawn";
+  archived: boolean;
+  attempts?: { id: string; run_id: string; recorded_at: string; outcome: string; result_md: string; references?: string[] }[];
+};
 export type Item = {
+  pending_inputs?: UserInput[];
+  inbox_archived?: boolean;
   id: string;
   dedupe_key: string;
   kind: string;

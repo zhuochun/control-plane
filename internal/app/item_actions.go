@@ -190,6 +190,9 @@ func (a *App) SetUserNote(ctx context.Context, id string, input SetUserNote) (js
 			return nil, stateConflict(item)
 		}
 		now := a.Now().UTC().UnixMilli()
+		if err = saveNoteInput(ctx, tx, item, input.UserNote, now); err != nil {
+			return nil, err
+		}
 		_, err = tx.ExecContext(ctx, `UPDATE items SET user_note=?,state_version=state_version+1,state_updated_at=? WHERE id=?`, input.UserNote, now, id)
 		if err != nil {
 			return nil, err
