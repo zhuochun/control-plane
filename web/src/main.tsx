@@ -20,6 +20,7 @@ import { ItemDetail } from "./items";
 import { ItemWorkspace, InboxCaptureDialog } from "./workspace";
 import { Preferences } from "./preferences";
 import { formatDateTime, useSettings } from "./settings";
+import { KeyboardProvider, KeyHint, useKeyboard } from "./keyboard";
 import type { ServiceStatus } from "./health";
 
 type ActivityProposal = {
@@ -196,6 +197,7 @@ function Activity() {
 }
 
 function Portal() {
+  const keyboard = useKeyboard();
   const location = useLocation();
   const navigate = useNavigate();
   const [workspaceMenu, setWorkspaceMenu] = useState<HTMLElement | null>(null);
@@ -235,15 +237,17 @@ function Portal() {
             navigate(path + (q ? "?" + new URLSearchParams({ q }).toString() : ""));
           }}>
             <SearchOutlined fontSize="small" />
+            <KeyHint>/</KeyHint>
             <input key={location.pathname + location.search} type="search" name="q" aria-label="Search items" placeholder="Search items, findings, or notes…" defaultValue={new URLSearchParams(location.search).get("q") ?? ""} />
           </form>
           <div className="topbar-actions">
-            <Button variant="outlined" onClick={() => setNewItem(true)}>Add to inbox</Button>
+            <Button data-inbox-open variant="outlined" onClick={() => setNewItem(true)}>Add to inbox <KeyHint>n</KeyHint></Button>
             <Button aria-haspopup="menu" aria-expanded={!!workspaceMenu} aria-controls={workspaceMenu ? "workspace-menu" : undefined} onClick={(event) => setWorkspaceMenu(event.currentTarget)} endIcon={<KeyboardArrowDownOutlined />}>Workspace</Button>
             <Menu id="workspace-menu" anchorEl={workspaceMenu} open={!!workspaceMenu} onClose={() => setWorkspaceMenu(null)}>
               <MenuItem component={NavLink} to="/interests" onClick={() => setWorkspaceMenu(null)}>Monitoring</MenuItem>
               <MenuItem component={NavLink} to="/activity" onClick={() => setWorkspaceMenu(null)}>Activity</MenuItem>
               <MenuItem component={NavLink} to="/preferences" onClick={() => setWorkspaceMenu(null)}>Preferences</MenuItem>
+              <MenuItem onClick={() => { setWorkspaceMenu(null); keyboard.showHelp(); }}>Keyboard shortcuts</MenuItem>
               <MenuItem disabled>{status.isError ? "Server unavailable" : status.data ? "Local workspace" : "Connecting…"}</MenuItem>
             </Menu>
           </div>
@@ -288,7 +292,7 @@ createRoot(document.getElementById("root")!).render(
       <CssBaseline />
       <QueryClientProvider client={client}>
         <BrowserRouter>
-          <Portal />
+          <KeyboardProvider><Portal /></KeyboardProvider>
         </BrowserRouter>
       </QueryClientProvider>
     </ThemeProvider>

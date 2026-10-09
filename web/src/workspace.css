@@ -924,6 +924,9 @@ main:has(> .item-workspace) > footer {
   .topbar {
     height: 124px;
   }
+  .topbar:has(.portal-search:focus-within) {
+    z-index: 21;
+  }
   main {
     min-height: calc(100dvh - 124px);
   }
@@ -1239,6 +1242,11 @@ fieldset.review-field {
   }
 }
 /* Immutable user submissions remain readable beside the current note editor. */
+.key-hint { margin-left: .5rem; padding: .05rem .3rem; border: 1px solid var(--line, #d8ddd8); border-radius: 4px; color: var(--muted); font: 12px ui-monospace, monospace; white-space: nowrap; }
+.reader-note-input > .key-hint { display: inline-block; margin-top: .35rem; }
+.shortcut-help { width: 100%; border-collapse: collapse; text-align: left; }
+.shortcut-help th, .shortcut-help td { padding: .4rem .5rem; vertical-align: top; }
+[data-reader-item]:focus-visible, .workspace-list:focus-visible { outline: 2px solid var(--accent, #246b59); outline-offset: -2px; }
 .reader-input-history { margin-bottom: 1rem; }
 .reader-input-history details { margin-top: .75rem; }
 .reader-input-history summary { cursor: pointer; }

@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { useMutation, useQueryClient } from "@tanstack/react-query";
-import { Alert, Button, TextField } from "@mui/material";
+import { Alert, Button, FormControlLabel, Switch, TextField } from "@mui/material";
+import { useKeyboard } from "./keyboard";
 import { api } from "./api";
 import {
   browserTimezone,
@@ -11,6 +12,7 @@ import {
 } from "./settings";
 
 export function Preferences() {
+  const keyboard = useKeyboard();
   const cache = useQueryClient();
   const settings = useSettings();
   const [loaded, setLoaded] = useState(false);
@@ -68,6 +70,13 @@ export function Preferences() {
           Cannot load preferences. Check that aicp is running.
         </Alert>
       )}
+
+      <section className="panel preference-section">
+        <h2>Keyboard</h2>
+        <FormControlLabel label="Vim keyboard shortcuts" control={<Switch checked={keyboard.enabled} onChange={(_, checked) => keyboard.setEnabled(checked)} />} />
+        <p>Use j/k to move between Items, i to edit Your note, and Esc to save and exit. This preference applies only to this browser and saves immediately.</p>
+        <Button onClick={keyboard.showHelp}>Keyboard shortcuts</Button>
+      </section>
 
       <form
         onSubmit={(event) => {

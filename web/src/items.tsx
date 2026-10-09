@@ -15,6 +15,9 @@ import ReactMarkdown from "react-markdown";
 import { AnswerNotes, ReportContent } from "./report-content";
 import { api, APIError, collection } from "./api";
 import type { ReportBlock, ReviewAnswer } from "./report-types";
+import { KeyHint, useKeyboard } from "./keyboard";
+import { useItemShortcuts } from "./item-shortcuts";
+import { useNoteEdits, useNoteEdit, useItemPending } from "./note-editor";
 import {
   effectiveTimezone,
   formatDateTime,
@@ -307,8 +310,10 @@ function ReminderChip({ item, timezone }: { item: Item; timezone?: string }) {
 
 export function useItemAction(itemId: string, onSuccess?: () => void) {
   const cache = useQueryClient();
+  const { announce } = useKeyboard();
   const request = useRef<{ signature: string; id: string } | null>(null);
   const mutation = useMutation({
+    mutationKey: ["item-write", itemId],
     mutationFn: (input: { item: Item; action: object }) => {
       const signature = JSON.stringify({
         version: input.item.state_version,
@@ -328,10 +333,16 @@ export function useItemAction(itemId: string, onSuccess?: () => void) {
         "POST",
       );
     },
-    onSuccess: (item) => {
+    onSuccess: (item, input) => {
       cache.setQueryData(["item", item.id], item);
       cache.invalidateQueries({ queryKey: ["items"] });
       cache.invalidateQueries({ queryKey: ["status"] });
+      const action = input.action as { type: string; state?: string };
+      const message = action.type === "acknowledge" ? "Marked seen"
+        : action.type === "set_todo" ? (action.state === "done" ? "Marked Done" : "Todo added or reopened")
+        : action.type === "set_reminder" ? "Reminder set"
+        : action.type === "clear_reminder" ? "Reminder cleared" : "Item updated";
+      announce(`${message}: ${item.title}.`);
       onSuccess?.();
     },
     onError: () => {
@@ -341,7 +352,10 @@ export function useItemAction(itemId: string, onSuccess?: () => void) {
   });
   return {
     mutation,
-    apply: (item: Item, action: object) => mutation.mutate({ item, action: { content_version: item.content_version, ...action } }),
+    apply: (item: Item, action: object) => {
+      if (!cache.isMutating({ mutationKey: ["item-write", itemId] }))
+        mutation.mutate({ item, action: { content_version: item.content_version, ...action } });
+    },
   };
 }
 
@@ -580,26 +594,20 @@ export function ReminderDialog({
 
 export function ItemDetail() {
   const { id = "" } = useParams();
-  const cache = useQueryClient();
   const settings = useSettings();
   const query = useQuery({
     queryKey: ["item", id],
     queryFn: () => api<Item>(`/items/${id}`),
   });
   const [reminder, setReminder] = useState(false);
-  const [note, setNote] = useState<string | null>(null);
-  const noteRequest = useRef<{ signature: string; id: string } | null>(null);
+  const edits = useNoteEdits();
+  const edit = useNoteEdit(edits, id);
+  const { enabled: vimEnabled } = useKeyboard();
+  const note = edit.draft;
+  const pending = useItemPending(id) || edit.pending;
   const { apply: applyItemAction, mutation } = useItemAction(id, () =>
     setReminder(false),
   );
-  const noteMutation = useMutation({
-    mutationFn: (body: object) => api<Item>(`/items/${id}/note`, body, "PUT"),
-    onSuccess: (item) => {
-      cache.setQueryData(["item", id], item);
-      cache.invalidateQueries({ queryKey: ["items"] });
-      setNote(null);
-    },
-  });
   const item = query.data;
   const watch = useQuery({queryKey:["watch",item?.watch_id],queryFn:()=>api<{slug:string;source:{kind:string;locator:string}}>(`/watches/${item?.watch_id}`),enabled:!!item?.watch_id});
   const interests = useQuery({queryKey:["interests"],queryFn:()=>collection<{id:string;slug:string;title:string}>("/interests?state=all")});
@@ -607,23 +615,15 @@ export function ItemDetail() {
     if (!item) return;
     applyItemAction(item, action);
   }
-  function saveNote() {
-    if (!item || note === null) return;
-    const signature = JSON.stringify({ version: item.state_version, note });
-    if (noteRequest.current?.signature !== signature)
-      noteRequest.current = { signature, id: crypto.randomUUID() };
-    noteMutation.mutate({
-      request_id: noteRequest.current.id,
-      expected_state_version: item.state_version,
-      user_note: note,
-      actor: "user",
-    });
-  }
+  const saveNote = () => item ? edits.save(item) : Promise.resolve(false);
+  useItemShortcuts({ item, pending, available: !query.isPending && !query.isError, apply,
+    remind: () => setReminder(true), save: saveNote,
+  });
   if (query.isPending) return <p role="status">Opening report…</p>;
   if (query.isError || !item)
     return <Alert severity="error">This item could not be opened.</Alert>;
   const sourceById = Object.fromEntries(
-    item.sources.map((source) => [source.id, source]),
+    (item.sources ?? []).map((source) => [source.id, source]),
   );
   const metric = parseMetric(item);
   return (
@@ -654,7 +654,7 @@ export function ItemDetail() {
         </section>
       )}
       <div className="detail-layout">
-        <article className="panel report-body">
+        <article className="panel report-body" data-reader-item={id} tabIndex={0} aria-label="Report content">
           <ReportContent item={item} />
           <AnswerNotes item={item} />
         </article>
@@ -665,28 +665,34 @@ export function ItemDetail() {
               {item.todo_state === "todo" ? (
                 <Button
                   variant="outlined"
+                  disabled={pending}
                   onClick={() => apply({ type: "set_todo", state: "done" })}
                 >
                   Mark Done
+                  <KeyHint>d</KeyHint>
                 </Button>
               ) : (
                 <Button
                   variant="outlined"
+                  disabled={pending}
                   onClick={() => apply({ type: "set_todo", state: "todo" })}
                 >
                   {item.todo_state === "done" ? "Reopen Todo" : "Set Todo"}
+                  <KeyHint>t</KeyHint>
                 </Button>
               )}
-              <Button variant="outlined" onClick={() => setReminder(true)}>
+              <Button variant="outlined" disabled={pending} onClick={() => setReminder(true)}>
                 {item.remind_at ? "Change reminder" : "Remind me"}
+                <KeyHint>s</KeyHint>
               </Button>
               {item.remind_at && (
-                <Button onClick={() => apply({ type: "clear_reminder" })}>
+                <Button disabled={pending} onClick={() => apply({ type: "clear_reminder" })}>
                   Clear reminder
                 </Button>
               )}
               {item.acknowledged_content_version < item.content_version && (
                 <Button
+                  disabled={pending}
                   onClick={() =>
                     apply({
                       type: "acknowledge",
@@ -695,6 +701,7 @@ export function ItemDetail() {
                   }
                 >
                   Mark seen
+                  <KeyHint>r</KeyHint>
                 </Button>
               )}
             </div>
@@ -710,8 +717,8 @@ export function ItemDetail() {
           <section className="panel">
             <h2>Sources</h2>
             <div className="sources">
-              {item.sources.length===0 && <p>No source reference was supplied.</p>}
-              {item.sources.map((source) => source.url ? (
+              {(item.sources ?? []).length===0 && <p>No source reference was supplied.</p>}
+              {(item.sources ?? []).map((source) => source.url ? (
                 <a key={source.id} href={source.url} target="_blank" rel="noopener noreferrer">
                   {source.label}
                   {source.observed_at && <small>Observed {when(source.observed_at, settings.data?.timezone)}</small>}
@@ -734,25 +741,30 @@ export function ItemDetail() {
             ].filter(Boolean).join(", ") || "no current trigger"}.</p>
           </section>
           <section className="panel">
-            <h2>Your note</h2>
+            <h2>Your note <KeyHint>i</KeyHint></h2>
             <TextField
+              id={"note-" + id}
+              label="Your note"
               multiline
               minRows={3}
               fullWidth
               value={note ?? item.user_note}
-              onChange={(e) => setNote(e.target.value)}
+              onChange={(e) => edits.change(item, e.target.value)}
+              slotProps={{ htmlInput: { "data-vim-note": true, readOnly: edit.pending && vimEnabled } }}
               placeholder="Keep context for the next run…"
             />
             <Button
               size="small"
-              disabled={note === null || noteMutation.isPending}
-              onClick={saveNote}
+              disabled={note === null || pending}
+              onClick={() => { void saveNote(); }}
             >
-              Save note
+              {edit.pending ? "Saving…" : "Save note"}
             </Button>
-            {noteMutation.isError && (
-              <Alert severity="error">{noteMutation.error.message}</Alert>
+            <KeyHint>Esc: save and exit</KeyHint>
+            {edit.error && (
+              <Alert severity="error">{edit.error.message} Your draft is kept; retry after the item refreshes.</Alert>
             )}
+            {edit.saved && note === null && <span role="status">Note saved.</span>}
           </section>
         </aside>
       </div>

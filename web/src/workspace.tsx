@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useRef, useState } from "react";
 import { useInfiniteQuery, useMutation, useQuery } from "@tanstack/react-query";
 import { useQueryClient } from "@tanstack/react-query";
 import {
@@ -27,6 +27,8 @@ import { type Item, ProposalCard, ReminderDialog, useItemAction } from "./items"
 import { ItemReader, attentionReasons } from "./item-reader";
 import { dateInputValue, effectiveTimezone, formatDateTime, useSettings } from "./settings";
 import type { ServiceStatus } from "./health";
+import { useShortcutCommands, KeyHint } from "./keyboard";
+import { useNoteEdits, useItemPending } from "./note-editor";
 
 type Interest = { id: string; slug: string; title: string };
 type WorkspaceMode = "attention" | "library" | "todo";
@@ -148,7 +150,11 @@ export function ItemWorkspace({
   const compact = useMediaQuery("(max-width:720px)");
   const [searchParams] = useSearchParams();
   const search = searchParams.get("q") ?? "";
-  const [drafts, setDrafts] = useState<Record<string, string>>({});
+  const edits = useNoteEdits();
+  const queue = useRef<HTMLDivElement>(null);
+  const remembered = useRef<string[]>([]);
+  const focusSelection = useRef(false);
+  const [navigationStatus, setNavigationStatus] = useState("");
   const [kind, setKind] = useState("");
   const [interest, setInterest] = useState("");
   const [sorts, setSorts] = useState<Record<WorkspaceMode, string>>({attention:"priority", todo:"priority", library:"newest"});
@@ -156,7 +162,7 @@ export function ItemWorkspace({
   const setSort = (value:string) => setSorts(current => ({...current, [mode]:value}));
   const [selected, setSelected] = useState<string | null>(null);
   const [proposalReview, setProposalReview] = useState(false);
-  useEffect(() => setSelected(null), [search, mode]);
+  useEffect(() => { setSelected(null); remembered.current = []; setNavigationStatus(""); }, [search, mode, kind, interest, sort]);
   useEffect(() => setProposalReview(false), [mode]);
   const view = mode === "library" ? "all" : mode;
   const items = useInfiniteQuery({
@@ -209,11 +215,53 @@ export function ItemWorkspace({
       : mode === "todo"
         ? "Todos"
         : "All items";
+  const pending = useItemPending(activeId ?? "");
+  const visibleRows = () => Array.from(queue.current?.querySelectorAll<HTMLButtonElement>(".queue-row") ?? []).filter(row => {
+    const group = row.closest("details");
+    return !group || group.open;
+  });
+  const remember = () => {
+    const ids = visibleRows().map(row => row.dataset.itemId!);
+    if (activeId && ids.includes(activeId)) remembered.current = ids;
+  };
+  useLayoutEffect(() => {
+    remember();
+    if (!focusSelection.current || !activeId) return;
+    focusSelection.current = false;
+    document.querySelector<HTMLElement>(`[data-reader-item="${CSS.escape(activeId)}"]`)?.focus();
+    visibleRows().find(row => row.dataset.itemId === activeId)?.scrollIntoView({ block: "nearest" });
+  });
+  const move = (direction: 1 | -1) => {
+    if (pending || (activeId && edits.get(activeId).pending)) return;
+    const rows = visibleRows();
+    const ids = rows.map(row => row.dataset.itemId!);
+    let next: string | undefined;
+    if (!activeId) next = direction === 1 ? ids[0] : ids.at(-1);
+    else if (ids.includes(activeId)) {
+      remembered.current = ids;
+      next = ids[ids.indexOf(activeId) + direction];
+      if (!next && direction === 1 && items.hasNextPage) setNavigationStatus("More items available. Load more items to continue.");
+    } else {
+      const index = remembered.current.indexOf(activeId);
+      if (index >= 0) {
+        const candidates = direction === 1 ? remembered.current.slice(index + 1) : remembered.current.slice(0, index).reverse();
+        next = candidates.find(id => ids.includes(id));
+      }
+    }
+    if (next) { setNavigationStatus(""); focusSelection.current = true; setSelected(next); }
+  };
+  useShortcutCommands({ next: () => move(1), previous: () => move(-1), back: () => {
+    if (!compact || !activeId || pending || edits.get(activeId).pending) return;
+    const row = visibleRows().find(row => row.dataset.itemId === activeId);
+    setSelected("");
+    requestAnimationFrame(() => (row?.isConnected ? row : queue.current)?.focus());
+  } });
   return (
     <div className={"item-workspace" + (activeId ? " has-reader" : "")}>
-      <div className="workspace-list" aria-label="Item queue">
+      <div ref={queue} className="workspace-list" tabIndex={-1} aria-label="Item queue">
         <h1 className="visually-hidden">{title}</h1>
         <div className="queue-tools">
+          <KeyHint>j / k</KeyHint>
           <label className="queue-sort">Sort
             <select aria-label="Sort items" value={sort} onChange={event => setSort(event.target.value)}>
               <option value="priority">{mode === "todo" ? "Due reminders first" : mode === "library" ? "Needs attention first" : "Attention first"}</option>
@@ -271,11 +319,12 @@ export function ItemWorkspace({
         )}
         {items.isPending && <p role="status">Loading items…</p>}
         <div className="queue-items">
-          {grouped ? groups.map(group => <details className="queue-group" key={group.label} open>
+          {grouped ? groups.map(group => <details className="queue-group" key={group.label} open onToggle={remember}>
             <summary><span>{group.label}</span><span className="queue-group-count" aria-label={`${group.items.length} loaded items`}>{group.items.length}</span><ExpandLess fontSize="small" /></summary>
-            {group.items.map(item => <QueueRow key={item.id} item={item} mode={mode} selected={activeId === item.id} select={() => setSelected(item.id)} grouped timezone={settings.data?.timezone} draft={drafts[item.id] !== undefined} />)}
-          </details>) : filtered.map(item => <QueueRow key={item.id} item={item} mode={mode} selected={activeId === item.id} select={() => setSelected(item.id)} timezone={settings.data?.timezone} draft={drafts[item.id] !== undefined} />)}
+            {group.items.map(item => <QueueRow key={item.id} item={item} mode={mode} selected={activeId === item.id} select={() => setSelected(item.id)} grouped timezone={settings.data?.timezone} draft={edits.get(item.id).draft !== null} />)}
+          </details>) : filtered.map(item => <QueueRow key={item.id} item={item} mode={mode} selected={activeId === item.id} select={() => setSelected(item.id)} timezone={settings.data?.timezone} draft={edits.get(item.id).draft !== null} />)}
         </div>
+        {navigationStatus && <p role="status">{navigationStatus}</p>}
         {items.hasNextPage && (
           <Button
             disabled={items.isFetchingNextPage}
@@ -351,18 +400,7 @@ export function ItemWorkspace({
           itemId={activeId}
           close={() => setSelected("")}
           interests={interests.data ?? []}
-          note={drafts[activeId] ?? null}
-          setNote={(value) =>
-            setDrafts((current) => ({ ...current, [activeId]: value }))
-          }
-          savedNote={(value) =>
-            setDrafts((current) => {
-              if (current[activeId] !== value) return current;
-              const next = { ...current };
-              delete next[activeId];
-              return next;
-            })
-          }
+          edits={edits}
         />
       ) : (
         <div className="reader-empty">
@@ -388,7 +426,7 @@ function QueueRow({item, mode, selected, select, timezone, draft, grouped = fals
   const rowDate = new Date(due ? item.remind_at! : item.content_updated_at);
   const day = due && dateInputValue(rowDate, timezone) === dateInputValue(new Date(), timezone) ? "Today" : new Intl.DateTimeFormat(undefined, {month:"short",day:"numeric",timeZone:effectiveTimezone(timezone)}).format(rowDate);
   return <div className={"queue-entry" + (selected ? " selected" : "") + (due ? " is-due" : "")}>
-    <button className={"queue-row" + (selected ? " selected" : "")} onClick={select} aria-pressed={selected}>
+    <button data-item-id={item.id} className={"queue-row" + (selected ? " selected" : "")} onClick={select} aria-pressed={selected}>
       <span className="queue-item-top"><strong>{due && <Schedule fontSize="small" />}{item.title}</strong></span>
       <span className="queue-item-date" title={formatDateTime(rowDate.toISOString(), timezone)}>{day}{due && <><br />{new Intl.DateTimeFormat(undefined, {timeStyle:"short",timeZone:effectiveTimezone(timezone)}).format(rowDate)}</>}</span>
       <span className="queue-item-summary">{item.summary}</span>
@@ -404,14 +442,15 @@ function QueueActions({ item, mode, selected }: { item: Item; mode:WorkspaceMode
   const [reminder, setReminder] = useState(false);
   const [menu, setMenu] = useState<HTMLElement | null>(null);
   const { mutation, apply } = useItemAction(item.id, () => setReminder(false));
+  const pending = useItemPending(item.id);
   const acknowledge = () => { setMenu(null); apply(item, {type:"acknowledge", content_version:item.content_version}); };
   const remind = () => { setMenu(null); mutation.reset(); setReminder(true); };
   const complete = () => { setMenu(null); apply(item, {type:"set_todo", state:"done"}); };
   return <div className="queue-actions">
-    <IconButton className="queue-more" size="small" aria-label={`Actions for ${item.title}`} aria-haspopup="menu" aria-expanded={!!menu} disabled={mutation.isPending} onClick={event => setMenu(event.currentTarget)}><MoreVert fontSize="small" /></IconButton>
+    <IconButton className="queue-more" size="small" aria-label={`Actions for ${item.title}`} aria-haspopup="menu" aria-expanded={!!menu} disabled={pending} onClick={event => setMenu(event.currentTarget)}><MoreVert fontSize="small" /></IconButton>
     {selected && <>
-      {mode === "todo" ? <Button size="small" variant="contained" startIcon={<Check fontSize="small" />} aria-label={`Mark done ${item.title}`} disabled={mutation.isPending} onClick={complete}>Mark Done</Button> : item.acknowledged_content_version < item.content_version && <Button size="small" variant="contained" startIcon={<VisibilityOutlined fontSize="small" />} aria-label={`Mark seen ${item.title}`} disabled={mutation.isPending} onClick={acknowledge}>Mark seen</Button>}
-      <Button size="small" variant="outlined" startIcon={<Schedule fontSize="small" />} aria-label={`Remind me about ${item.title}`} disabled={mutation.isPending} onClick={remind}>Remind</Button>
+      {mode === "todo" ? <Button size="small" variant="contained" startIcon={<Check fontSize="small" />} aria-label={`Mark done ${item.title}`} disabled={pending} onClick={complete}>Mark Done <KeyHint>d</KeyHint></Button> : item.acknowledged_content_version < item.content_version && <Button size="small" variant="contained" startIcon={<VisibilityOutlined fontSize="small" />} aria-label={`Mark seen ${item.title}`} disabled={pending} onClick={acknowledge}>Mark seen <KeyHint>r</KeyHint></Button>}
+      <Button size="small" variant="outlined" startIcon={<Schedule fontSize="small" />} aria-label={`Remind me about ${item.title}`} disabled={pending} onClick={remind}>Remind <KeyHint>s</KeyHint></Button>
     </>}
     <Menu anchorEl={menu} open={!!menu} onClose={() => setMenu(null)} anchorOrigin={{vertical:"bottom",horizontal:"right"}} transformOrigin={{vertical:"top",horizontal:"right"}} slotProps={{paper:{className:"queue-action-menu"}}}>
       {mode === "todo" && <MenuItem onClick={complete}><Check fontSize="small" /> Mark Done</MenuItem>}

@@ -1,5 +1,5 @@
-import { useRef, useState } from "react";
-import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useState } from "react";
+import { useQuery } from "@tanstack/react-query";
 import {
   Alert,
   Button,
@@ -22,6 +22,9 @@ import { type Item, parseMetric, ReminderDialog, useItemAction } from "./items";
 import { MetricChart } from "./metric-chart";
 import { formatDateTime, useSettings } from "./settings";
 import { ItemInputs } from "./item-inputs";
+import { KeyHint, useKeyboard } from "./keyboard";
+import { type NoteEdits, useNoteEdit, useItemPending } from "./note-editor";
+import { useItemShortcuts } from "./item-shortcuts";
 
 export function attentionReasons(item: Item) {
   return [
@@ -38,19 +41,14 @@ export function attentionReasons(item: Item) {
 export function ItemReader({
   itemId,
   close,
-  note,
-  setNote,
-  savedNote,
+  edits,
   interests,
 }: {
   itemId: string;
   close: () => void;
-  note: string | null;
-  setNote: (value: string) => void;
-  savedNote: (value: string) => void;
+  edits: NoteEdits;
   interests: { id: string; slug: string; title: string }[];
 }) {
-  const cache = useQueryClient();
   const settings = useSettings();
   const query = useQuery({
     queryKey: ["item", itemId],
@@ -59,41 +57,10 @@ export function ItemReader({
   });
   const [reminder, setReminder] = useState(false);
   const [reminderMenu, setReminderMenu] = useState<HTMLElement | null>(null);
-  const noteRequest = useRef<{ signature: string; id: string } | null>(null);
-  const noteVersion = useRef<{ itemId: string; version: number; text: string; inputId?: string } | null>(null);
+  const edit = useNoteEdit(edits, itemId);
+  const { enabled: vimEnabled } = useKeyboard();
+  const note = edit.draft;
   const { apply, mutation } = useItemAction(itemId, () => setReminder(false));
-  const saveNote = useMutation({
-    mutationFn: (input: { item: Item; value: string }) => {
-      const base = noteVersion.current;
-      const sameNote = base?.text === input.item.user_note && base?.inputId === input.item.pending_inputs?.find(entry => entry.kind === "note")?.id;
-      const version = !base || base.itemId !== itemId || sameNote ? input.item.state_version : base.version;
-      const signature = JSON.stringify({
-        version,
-        note: input.value,
-      });
-      if (noteRequest.current?.signature !== signature)
-        noteRequest.current = { signature, id: crypto.randomUUID() };
-      return api<Item>(
-        "/items/" + itemId + "/note",
-        {
-          request_id: noteRequest.current.id,
-          actor: "user",
-          expected_state_version: version,
-          user_note: input.value,
-        },
-        "PUT",
-      );
-    },
-    onSuccess: (updated, input) => {
-      cache.setQueryData(["item", updated.id], updated);
-      cache.invalidateQueries({ queryKey: ["items"] });
-      noteVersion.current = null;
-      savedNote(input.value);
-    },
-    onError: () => {
-      cache.invalidateQueries({ queryKey: ["item", itemId] });
-    },
-  });
   const item = query.data;
   const sources = item?.sources ?? [];
   const metric = item ? parseMetric(item) : null;
@@ -102,10 +69,14 @@ export function ItemReader({
     queryFn: () => api<{ slug: string }>("/watches/" + item?.watch_id),
     enabled: !!item?.watch_id,
   });
-  const pending = mutation.isPending || saveNote.isPending;
+  const pending = useItemPending(itemId) || edit.pending;
+  useItemShortcuts({ item, pending, available: !query.isPending && !query.isError,
+    apply: action => item && apply(item, action), remind: () => setReminder(true),
+    save: () => item ? edits.save(item) : Promise.resolve(false),
+  });
   return (
     <section className="workspace-reader" aria-label="Item details">
-      <div className="reader-scroll" tabIndex={0} aria-label="Report content">
+      <div className="reader-scroll" data-reader-item={itemId} tabIndex={0} aria-label="Report content">
         <div className="mobile-reader-back">
           <IconButton aria-label="Close item detail" onClick={close}>
             <ArrowBackOutlined />
@@ -308,19 +279,18 @@ export function ItemReader({
           className="reader-note"
           onSubmit={(event) => {
             event.preventDefault();
-            if (saveNote.isError) noteVersion.current = { itemId, version: item.state_version, text: item.user_note, inputId: item.pending_inputs?.find(entry => entry.kind === "note")?.id };
-            if (note !== null) saveNote.mutate({ item, value: note });
+            if (!pending) void edits.save(item);
           }}
         >
           <div className="reader-note-heading">
-            <label htmlFor={"note-" + itemId}>Your note</label>
+            <label htmlFor={"note-" + itemId}>Your note <KeyHint>i</KeyHint></label>
             <Button
               type="submit"
               size="small"
               variant="outlined"
               disabled={note === null || pending}
             >
-              {saveNote.isPending ? "Saving…" : "Save note"}
+              {edit.pending ? "Saving…" : "Save note"}
             </Button>
           </div>
           <div className="reader-note-input">
@@ -332,12 +302,12 @@ export function ItemReader({
               fullWidth
               placeholder="Keep context for the next run…"
               value={note ?? item.user_note}
+              slotProps={{ htmlInput: { "data-vim-note": true, readOnly: edit.pending && vimEnabled } }}
               onChange={(event) => {
-                if (note === null || noteVersion.current?.itemId !== itemId) noteVersion.current = { itemId, version: item.state_version, text: item.user_note, inputId: item.pending_inputs?.find(entry => entry.kind === "note")?.id };
-                setNote(event.target.value);
-                if (!saveNote.isPending) saveNote.reset();
+                edits.change(item, event.target.value);
               }}
             />
+            <KeyHint>Esc: save and exit</KeyHint>
           </div>
           <div className="reader-note-footer">
             {item.remind_at ? (
@@ -382,6 +352,7 @@ export function ItemReader({
                   : item.todo_state === "done"
                     ? "Reopen Todo"
                     : "Add Todo"}
+                <KeyHint>{item.todo_state === "todo" ? "d" : "t"}</KeyHint>
               </Button>
               <div className="reader-reminder-control">
                 <Button
@@ -392,6 +363,7 @@ export function ItemReader({
                   onClick={() => setReminder(true)}
                 >
                   {item.remind_at ? "Change reminder" : "Remind"}
+                  <KeyHint>s</KeyHint>
                 </Button>
                 {item.remind_at && (
                   <IconButton
@@ -421,6 +393,7 @@ export function ItemReader({
                   }
                 >
                   Mark seen
+                  <KeyHint>r</KeyHint>
                 </Button>
               ) : (
                 <span className="reader-seen">
@@ -432,13 +405,13 @@ export function ItemReader({
           {mutation.isError && (
             <Alert severity="error">{mutation.error.message}</Alert>
           )}
-          {saveNote.isError && (
+          {edit.error && (
             <Alert severity="error">
-              {saveNote.error.message} Your draft is kept; retry after the item
+              {edit.error.message} Your draft is kept; retry after the item
               refreshes.
             </Alert>
           )}
-          {saveNote.isSuccess && note === null && (
+          {edit.saved && note === null && (
             <span role="status">Note saved.</span>
           )}
         </form>
