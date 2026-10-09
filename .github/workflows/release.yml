@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -32,7 +32,7 @@ jobs:
           install-only: true
       - run: pwsh -File scripts/testing/provision-renderer.ps1
       - run: pwsh -File scripts/test.ps1 -Suite release -Profile renderer
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: verification-linux
@@ -43,7 +43,7 @@ jobs:
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -64,7 +64,7 @@ jobs:
         run: .\scripts\testing\provision-renderer.ps1
       - shell: pwsh
         run: .\scripts\test.ps1 -Suite release -Profile renderer
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: verification-windows
@@ -83,7 +83,7 @@ jobs:
       - uses: actions/checkout@v5
         with:
           fetch-depth: 0
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm

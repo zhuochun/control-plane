@@ -136,6 +136,12 @@ try {
       AICP_TEST_PROFILE: options.profile ?? "core",
       AICP_TEST_BUNDLE: bundle,
     };
+    // Playwright forces color in workers. Express the runner's no-color
+    // preference with one flag so workers never inherit contradictory flags.
+    if (env.NO_COLOR !== undefined) {
+      env.FORCE_COLOR = "0";
+      delete env.NO_COLOR;
+    }
     delete env.AICP_PLANTUML_JAR;
     delete env.AICP_TEST_PLANTUML_JAR;
     delete env.AICP_TEST_BINARY;

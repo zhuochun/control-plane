@@ -54,6 +54,15 @@ PlantUML needs a compatible Java runtime (the tested JAR requires Java 11 or
 newer) on PATH and an absolute `AICP_PLANTUML_JAR` path. When unavailable, source
 remains readable. No external rendering service is contacted.
 
+The portal build splits UI and diagram dependencies in `web/vite.config.ts`.
+ELK layout runs in a same-origin worker through `web/src/elk-layout.ts`, with
+termination after success or failure; it remains packaged inside the executable.
+Mermaid's upstream parser is a single prebundled module of about 629 KB minified,
+so its size warning remains visible at the unchanged 500 KB limit. Splitting
+application chunks cannot split that module. The KaTeX 0.18.2 override in
+`web/package.json` fixes GHSA-238p-pmpm-9mq7 until Mermaid's own dependency range
+includes a patched version; retain the math rendering check when removing it.
+
 User notes and inbox intake are owned by `internal/app/item_inputs.go` and the
 [input-processing contract](specs/20261008-user-input-processing-spec.md).
 Immutable input revisions and attempts are separate from agent content and

@@ -283,6 +283,11 @@ func TestVersionSixStartReceiptReplaysNewCapturedContract(t *testing.T) {
 		}
 		ids = append(ids, interest.ID)
 	}
+	// Fast hosts can create many Interests within the same clock tick. Exercise
+	// the supported ID tie-breaker rather than depending on wall-clock speed.
+	if _, err = s.DB.ExecContext(ctx, "UPDATE interests SET created_at=?", int64(1767225600000)); err != nil {
+		t.Fatal(err)
+	}
 	raw, err := a.CreateWatch(ctx, CreateWatch{MatchingPolicy: "explicit", InterestIDs: ids[10:70], Source: WatchSource{Kind: "fixture", Locator: "migration"}})
 	if err != nil {
 		t.Fatal(err)
@@ -381,7 +386,7 @@ func TestVersionSixStartReceiptReplaysNewCapturedContract(t *testing.T) {
 	if err = json.Unmarshal(replay, &packet); err != nil {
 		t.Fatal(err)
 	}
-	if strings.Contains(string(replay), `"brief"`) || strings.Contains(string(replay), `"selected_watches"`) || len(packet.Context.Interests) != 50 || packet.Context.Contexts["AGENTS.md"] != custom || packet.Context.Interests[0].InstructionsMD != "Captured instructions 10" {
+	if strings.Contains(string(replay), `"brief"`) || strings.Contains(string(replay), `"selected_watches"`) || len(packet.Context.Interests) != 50 || packet.Context.Contexts["AGENTS.md"] != custom {
 		t.Fatalf("migration reconstructed live or wrong scope: %s", replay)
 	}
 	page, err := a.BriefPage(ctx, packet.Context.Continuations["interests"])
@@ -390,6 +395,22 @@ func TestVersionSixStartReceiptReplaysNewCapturedContract(t *testing.T) {
 	}
 	if len(page["items"].([]Interest)) != 10 {
 		t.Fatalf("migrated required Interest pages incomplete: %#v", page)
+	}
+	expected := map[string]string{}
+	for i := 10; i < 70; i++ {
+		expected[ids[i]] = fmt.Sprintf("Captured instructions %02d", i)
+	}
+	previousID := ""
+	for _, interest := range append(packet.Context.Interests, page["items"].([]Interest)...) {
+		instructions, ok := expected[interest.ID]
+		if !ok || interest.InstructionsMD != instructions || interest.ID <= previousID {
+			t.Fatalf("migrated Interest scope, captured instructions, or tie ordering changed: %+v", interest)
+		}
+		delete(expected, interest.ID)
+		previousID = interest.ID
+	}
+	if len(expected) != 0 {
+		t.Fatalf("migration omitted required Interests: %v", expected)
 	}
 	changes, err := a.ChangesPage(ctx, packet.Run.AfterSeq, packet.Run.ThroughSeq, packet.Context.Continuations["changes"], 100)
 	if err != nil {

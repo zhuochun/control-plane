@@ -531,6 +531,14 @@ test(
   },
   async ({ page, request }) => {
     const title = "Rich review " + crypto.randomUUID();
+    const layoutWorkers: import("@playwright/test").Worker[] = [];
+    const closedWorkers = new Set<import("@playwright/test").Worker>();
+    page.on("worker", (worker) => {
+      if (worker.url().includes("elk-worker")) {
+        layoutWorkers.push(worker);
+        worker.on("close", () => closedWorkers.add(worker));
+      }
+    });
     const format = {
       id: title,
       version: 1,
@@ -575,7 +583,8 @@ test(
                   id: "diagram",
                   type: "diagram",
                   language: "mermaid",
-                  source: "flowchart LR\nAgent --> Item\nItem --> Human",
+                  source:
+                    'flowchart-elk LR\nAgent --> Item\nItem --> Human\nMath["$$x^2$$"] --> Item',
                   description: "Review flow",
                   caption: "Review flow preview",
                 },
@@ -634,6 +643,12 @@ test(
         diagram.evaluate((image) => (image as HTMLImageElement).naturalWidth),
       )
       .toBeGreaterThan(0);
+    await expect.poll(() => layoutWorkers.length).toBe(1);
+    await expect.poll(() => closedWorkers.size).toBe(1);
+    await page.reload();
+    await expect(diagram).toBeVisible();
+    await expect.poll(() => layoutWorkers.length).toBe(2);
+    await expect.poll(() => closedWorkers.size).toBe(2);
     await form
       .getByRole("button", { name: "Enlarge Review flow preview" })
       .click();
@@ -704,6 +719,14 @@ test(
     await expect(
       page.getByRole("region", { name: "Your answers" }),
     ).toContainText("earlier review material");
+    await page.route("**/elk-worker*.js", (route) => route.abort());
+    await page.reload();
+    await expect(form.getByRole("alert")).toContainText(
+      "Diagram layout worker failed.",
+    );
+    await form.getByText("Diagram source (mermaid)").click();
+    await expect(form.locator("details pre")).toContainText("Agent --> Item");
+    await expect.poll(() => closedWorkers.size).toBe(layoutWorkers.length);
   },
 );
 

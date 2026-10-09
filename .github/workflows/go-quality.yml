@@ -13,7 +13,7 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
-      - uses: actions/setup-node@v5
+      - uses: actions/setup-node@v7
         with:
           node-version: 24
           cache: npm
@@ -27,7 +27,7 @@ jobs:
           version-file: .golangci-lint-version
           install-only: true
       - run: pwsh -File scripts/test.ps1 -Suite main
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         if: always()
         with:
           name: verification-${{ github.run_id }}-${{ github.run_attempt }}
