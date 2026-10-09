@@ -2,6 +2,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"testing"
 
@@ -25,6 +26,18 @@ func TestSettingRetryDoesNotOverwriteLaterEdit(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	var saved Settings
+	if err = json.Unmarshal(original, &saved); err != nil || saved.ContextGuidance == nil || saved.ContextGuidance.UpdatePolicy == "" {
+		t.Fatalf("settings save lost guidance: %s %v", original, err)
+	}
+	var payload string
+	if err = s.DB.QueryRowContext(ctx, "SELECT payload FROM events WHERE change_type='settings.updated' ORDER BY seq DESC LIMIT 1").Scan(&payload); err != nil {
+		t.Fatal(err)
+	}
+	var event map[string]any
+	if err = json.Unmarshal([]byte(payload), &event); err != nil || event["context_guidance"] != nil {
+		t.Fatalf("read-time help leaked into captured changes: %s %v", payload, err)
+	}
 	if _, err := a.SetSettings(ctx, SetSettings{RequestID: "second", Timezone: "UTC"}); err != nil {
 		t.Fatal(err)
 	}
@@ -33,6 +46,9 @@ func TestSettingRetryDoesNotOverwriteLaterEdit(t *testing.T) {
 		t.Fatalf("receipt mismatch: %s %v", replay, err)
 	}
 	current, _ := a.Settings(ctx)
+	if current.ContextGuidance.AgentsMD == "" || current.ContextGuidance.UserMD == "" || current.ContextGuidance.ItemContext == "" || current.ContextGuidance.UpdatePolicy == "" {
+		t.Fatal("settings omitted contextual editing guidance")
+	}
 	if current.Timezone != "UTC" {
 		t.Fatal("retry overwrote later edit")
 	}

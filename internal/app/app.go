@@ -120,13 +120,22 @@ func (a *App) event(ctx context.Context, tx *sql.Tx, actor, entityType, entityID
 }
 
 type Settings struct {
-	Timezone         string `json:"timezone"`
-	AgentsMD         string `json:"agents_md"`
-	UserMD           string `json:"user_md"`
-	DefaultAgentsMD  string `json:"default_agents_md"`
-	DefaultUserMD    string `json:"default_user_md"`
-	AgentsMDMaxBytes int    `json:"agents_md_max_bytes"`
-	UserMDMaxBytes   int    `json:"user_md_max_bytes"`
+	ContextGuidance  *ContextGuidance `json:"context_guidance,omitempty"`
+	Timezone         string           `json:"timezone"`
+	AgentsMD         string           `json:"agents_md"`
+	UserMD           string           `json:"user_md"`
+	DefaultAgentsMD  string           `json:"default_agents_md"`
+	DefaultUserMD    string           `json:"default_user_md"`
+	AgentsMDMaxBytes int              `json:"agents_md_max_bytes"`
+	UserMDMaxBytes   int              `json:"user_md_max_bytes"`
+}
+
+// ContextGuidance is read-time help, not another owner-editable context.
+type ContextGuidance struct {
+	AgentsMD     string `json:"agents_md"`
+	UserMD       string `json:"user_md"`
+	ItemContext  string `json:"item_context"`
+	UpdatePolicy string `json:"update_policy"`
 }
 
 const AgentsMDMaxBytes = 8 << 10
@@ -169,7 +178,13 @@ func (row settingsRow) public() Settings {
 	if row.timezoneMode == "auto" {
 		timezone = "browser"
 	}
-	return Settings{Timezone: timezone, AgentsMD: row.agentsMD, UserMD: row.userMD, DefaultAgentsMD: row.defaultAgentsMD, DefaultUserMD: row.defaultUserMD, AgentsMDMaxBytes: AgentsMDMaxBytes, UserMDMaxBytes: UserMDMaxBytes}
+	return Settings{Timezone: timezone, AgentsMD: row.agentsMD, UserMD: row.userMD, DefaultAgentsMD: row.defaultAgentsMD, DefaultUserMD: row.defaultUserMD, AgentsMDMaxBytes: AgentsMDMaxBytes, UserMDMaxBytes: UserMDMaxBytes,
+		ContextGuidance: &ContextGuidance{
+			AgentsMD:     "Stable operating rules: how agents inspect, handle input, write, delegate, and finish. Interest instructions and Watcher scope belong in their own records.",
+			UserMD:       "Durable owner priorities, background, preferences, and constraints. Record confirmed context, not inferred preferences or task status.",
+			ItemContext:  "Task-specific facts, decisions, progress, results, and continuation belong in the Item's report/context, not global guidance or user notes.",
+			UpdatePolicy: "Update for explicit requests or confirmed lasting changes within existing authority. Read and merge current text; preserve unrelated instructions and propose uncertain preferences. Keep secrets out. Compare customized agents_md with default_agents_md before merging or resetting. Changes affect future Runs; active Runs keep captured context.",
+		}}
 }
 
 func (a *App) Settings(ctx context.Context) (Settings, error) {
@@ -223,8 +238,12 @@ func (a *App) SetSettings(ctx context.Context, input SetSettings) (json.RawMessa
 		if _, err = tx.ExecContext(ctx, "UPDATE settings SET value = ? WHERE key = 'user_md'", userMD); err != nil {
 			return nil, err
 		}
-		settings := Settings{Timezone: input.Timezone, AgentsMD: agentsMD, UserMD: userMD, DefaultAgentsMD: current.defaultAgentsMD, DefaultUserMD: current.defaultUserMD, AgentsMDMaxBytes: AgentsMDMaxBytes, UserMDMaxBytes: UserMDMaxBytes}
-		if err := a.event(ctx, tx, "user", "settings", "timezone", "settings.updated", settings); err != nil {
+		current.timezoneValue, current.timezoneMode = timezoneValue, timezoneMode
+		current.agentsMD, current.userMD = agentsMD, userMD
+		settings := current.public()
+		recorded := settings
+		recorded.ContextGuidance = nil // Read-time help is not historical owner data.
+		if err := a.event(ctx, tx, "user", "settings", "timezone", "settings.updated", recorded); err != nil {
 			return nil, err
 		}
 		return settings, nil

@@ -200,7 +200,7 @@ func TestItemLookupAndCapturedAttentionThroughMCP(t *testing.T) {
 		t.Fatalf("brief unavailable during active Run: %#v", brief)
 	}
 	settings := call("get_settings", map[string]any{})
-	if settings["agents_md"] == nil {
+	if settings["agents_md"] == nil || settings["context_guidance"] == nil {
 		t.Fatal("context unavailable on demand")
 	}
 	status := call("get_status", map[string]any{})

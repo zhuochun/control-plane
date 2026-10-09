@@ -123,6 +123,22 @@ Graphviz requirements on other platforms.
 
 ## Find the owner of a change
 
+The current default agent protocol is the versioned embedded template
+[`internal/store/defaults/agents-v12.md`](../internal/store/defaults/agents-v12.md).
+Migration 12 consolidates reading/input, writing, handoff/repair and completion
+rules. It upgrades `agents_md` only when it exactly matches the prior default;
+custom and intentionally empty instructions remain unchanged. `default_agents_md`
+always exposes the new recommendation. Existing Run snapshots remain immutable.
+
+Settings reads return `context_guidance` explaining when and where to update
+durable instructions. Preferences uses the same text: operating rules belong in
+`agents_md`, owner priorities/preferences in `user_md`, and task progress in Item
+report/context. Update only for explicit requests or confirmed lasting changes
+within authority; read/merge existing text and propose uncertain preferences.
+This help is not stored as another setting or repeated in captured Run context.
+The [heartbeat example](../examples/heartbeat-prompt.md) bootstraps the captured
+protocol; [executor handoffs](../examples/delegation-handoff.md) remain Item-scoped.
+
 | Change or question | Start here | Follow through |
 | --- | --- | --- |
 | Watcher, Interest, Item, or Run meaning | `docs/glossary.md`, current Watcher–Interest specification | `internal/app`, migration, affected adapters |

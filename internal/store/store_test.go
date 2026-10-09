@@ -83,6 +83,88 @@ func TestUserInputMigrationFromVersion10(t *testing.T) {
 	}
 }
 
+func TestConsolidatedGuidanceUpgradeFromVersion11(t *testing.T) {
+	for _, customization := range []string{"untouched", "custom", "empty"} {
+		t.Run(customization, func(t *testing.T) {
+			ctx := context.Background()
+			dir := t.TempDir()
+			db, err := sql.Open("sqlite", filepath.Join(dir, "aicp.db"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			source, err := fs.Sub(migrations, "migrations")
+			if err != nil {
+				t.Fatal(err)
+			}
+			provider, err := goose.NewProvider(goose.DialectSQLite3, db, source, goose.WithGoMigrations(
+				goose.NewGoMigration(6, &goose.GoFunc{RunTx: migrateAttentionSnapshots}, nil),
+				goose.NewGoMigration(7, &goose.GoFunc{RunTx: migrateInspectionReceipts}, nil),
+				goose.NewGoMigration(8, &goose.GoFunc{RunTx: migrateDelegationGuidance}, nil),
+				goose.NewGoMigration(9, &goose.GoFunc{RunTx: migrateDelegationHandoffGuidance}, nil)))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if _, err = provider.UpTo(ctx, 11); err != nil {
+				t.Fatal(err)
+			}
+			var previous string
+			if err = db.QueryRowContext(ctx, "SELECT value FROM settings WHERE key='agents_md'").Scan(&previous); err != nil {
+				t.Fatal(err)
+			}
+			if customization != "untouched" {
+				previous = ""
+				if customization == "custom" {
+					previous = "# Custom owner protocol\nKeep these rules exactly."
+				}
+				if _, err = db.ExecContext(ctx, "UPDATE settings SET value=? WHERE key='agents_md'", previous); err != nil {
+					t.Fatal(err)
+				}
+			}
+			if _, err = db.ExecContext(ctx, "UPDATE settings SET value='Owner constraints' WHERE key='user_md'"); err != nil {
+				t.Fatal(err)
+			}
+			snapshot := `{"contexts":{"AGENTS.md":"Captured old rules","USER.md":"Captured owner context"},"interests":[],"attention_items":[],"user_inputs":[]}`
+			if _, err = db.ExecContext(ctx, "INSERT INTO runs(id,runner_label,status,started_at,lease_expires_at,selected_watches,after_seq,through_seq,context_snapshot) VALUES('historical','agent','completed',1,0,'[]',0,0,?)", snapshot); err != nil {
+				t.Fatal(err)
+			}
+			if err = db.Close(); err != nil {
+				t.Fatal(err)
+			}
+			s, err := Open(ctx, dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer func() {
+				if err := s.Close(); err != nil {
+					t.Error(err)
+				}
+			}()
+			if err = s.migrate(ctx); err != nil {
+				t.Fatal(err)
+			}
+			var current, recommended, owner, captured string
+			if err = s.DB.QueryRowContext(ctx, "SELECT (SELECT value FROM settings WHERE key='agents_md'),(SELECT value FROM settings WHERE key='default_agents_md'),(SELECT value FROM settings WHERE key='user_md'),(SELECT context_snapshot FROM runs WHERE id='historical')").Scan(&current, &recommended, &owner, &captured); err != nil {
+				t.Fatal(err)
+			}
+			want := previous
+			if customization == "untouched" {
+				want = agentGuidanceV12
+			}
+			if current != want || recommended != agentGuidanceV12 || owner != "Owner constraints" || captured != snapshot {
+				t.Fatalf("guidance upgrade changed owner context or history: %q %q %q %q", current, recommended, owner, captured)
+			}
+			for _, obligation := range []string{"user_inputs", "process_item_input", "propose_change", "upsert_item", "content_conflict", "Before handoff", "After launch, save external_ref", "primary checks evidence", "Reuse the delegation ID", "current write version", "actor=agent"} {
+				if !strings.Contains(recommended, obligation) {
+					t.Fatalf("lost guidance obligation: %s", obligation)
+				}
+			}
+			if len(recommended) >= len(previous) && customization == "untouched" {
+				t.Fatal("consolidation did not reduce the default")
+			}
+		})
+	}
+}
+
 func TestAttentionSnapshotMigrationFromVersion5(t *testing.T) {
 	ctx := context.Background()
 	dir := t.TempDir()
@@ -151,7 +233,7 @@ VALUES('preserved-item','preserved','report','Preserved','Original',?,1,'hash','
 		}
 	})
 	var version int64
-	if err = opened.DB.QueryRowContext(ctx, `SELECT max(version_id) FROM goose_db_version WHERE is_applied=1`).Scan(&version); err != nil || version != 11 {
+	if err = opened.DB.QueryRowContext(ctx, `SELECT max(version_id) FROM goose_db_version WHERE is_applied=1`).Scan(&version); err != nil || version != 12 {
 		t.Fatalf("schema version %d: %v", version, err)
 	}
 	var content, todo, note, preservedSnapshot string
@@ -301,7 +383,7 @@ func TestWatcherInterestMigrationPreservesHistory(t *testing.T) {
 	if err = store.DB.QueryRowContext(ctx, "SELECT value FROM settings WHERE key='default_agents_md'").Scan(&defaultGuidance); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(defaultGuidance, "Watchers define bounded source inputs") {
+	if !strings.Contains(defaultGuidance, "captured scope and Interest IDs/revisions") {
 		t.Fatalf("missing current reset guidance: %q", defaultGuidance)
 	}
 }
@@ -347,7 +429,7 @@ func TestPersistenceAndExclusiveOwnership(t *testing.T) {
 	if err := reopened.DB.QueryRowContext(ctx, "SELECT value FROM settings WHERE key='agents_md'").Scan(&guidance); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(guidance, "Watchers define bounded source inputs") {
+	if guidance != agentGuidanceV12 {
 		t.Fatalf("seeded guidance is stale: %q", guidance)
 	}
 	for name, want := range map[string]int{"foreign_keys": 1, "synchronous": 2, "busy_timeout": 5000} {
@@ -434,10 +516,10 @@ func TestDelegationGuidanceUpgradePreservesOwnerEdits(t *testing.T) {
 					if err = s.DB.QueryRowContext(ctx, "SELECT value FROM settings WHERE key='default_agents_md'").Scan(&recommended); err != nil {
 						t.Fatal(err)
 					}
-					if !strings.Contains(recommended, "update_item_work") || strings.Count(recommended, "## Autonomous follow-through") != 1 {
+					if !strings.Contains(recommended, "update_item_work") || strings.Count(recommended, "## Continue work") != 1 {
 						t.Fatalf("missing/duplicated guidance: %s", recommended)
 					}
-					if strings.Count(recommended, "## Practical delegation handoff") != 1 || !strings.Contains(recommended, "low-risk, reversible") || !strings.Contains(recommended, "content_conflict") {
+					if !strings.Contains(recommended, "After launch, save external_ref") || !strings.Contains(recommended, "low-risk, reversible") || !strings.Contains(recommended, "content_conflict") {
 						t.Fatalf("missing/duplicated handoff guidance: %s", recommended)
 					}
 					if custom && guidance != "Owner instructions" {

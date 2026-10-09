@@ -81,7 +81,8 @@ func (s *Store) migrate(ctx context.Context) error {
 			goose.NewGoMigration(6, &goose.GoFunc{RunTx: migrateAttentionSnapshots}, nil),
 			goose.NewGoMigration(7, &goose.GoFunc{RunTx: migrateInspectionReceipts}, nil),
 			goose.NewGoMigration(8, &goose.GoFunc{RunTx: migrateDelegationGuidance}, nil),
-			goose.NewGoMigration(9, &goose.GoFunc{RunTx: migrateDelegationHandoffGuidance}, nil)))
+			goose.NewGoMigration(9, &goose.GoFunc{RunTx: migrateDelegationHandoffGuidance}, nil),
+			goose.NewGoMigration(12, &goose.GoFunc{RunTx: migrateConsolidatedGuidance}, nil)))
 	if err != nil {
 		return err
 	}
@@ -89,7 +90,7 @@ func (s *Store) migrate(ctx context.Context) error {
 	if err != nil {
 		return fmt.Errorf("read schema version: %w", err)
 	}
-	if version > 11 {
+	if version > 12 {
 		return fmt.Errorf("database schema %d is newer than this aicp supports; upgrade aicp", version)
 	}
 	if _, err := provider.Up(ctx); err != nil {

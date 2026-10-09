@@ -174,7 +174,7 @@ func New(serverURL, version string) *mcp.Server {
 		value, err := caller.call(ctx, http.MethodGet, path, nil)
 		return respond(value, err)
 	})
-	mcp.AddTool(server, &mcp.Tool{Name: "set_user_context", Description: "Save the person's approved USER.md draft directly without starting a Run. Include their priorities and follow-through; never put source credentials here. This changes future Run snapshots only."}, func(ctx context.Context, _ *mcp.CallToolRequest, input app.SetUserContext) (*mcp.CallToolResult, map[string]any, error) {
+	mcp.AddTool(server, &mcp.Tool{Name: "set_user_context", Description: "Save an authorized USER.md draft without a Run. Read get_settings.context_guidance and merge current text. Keep durable confirmed priorities/preferences/constraints; exclude secrets, inferred preferences and task progress. Changes affect future Run snapshots only."}, func(ctx context.Context, _ *mcp.CallToolRequest, input app.SetUserContext) (*mcp.CallToolResult, map[string]any, error) {
 		value, err := caller.call(ctx, http.MethodPut, "/settings/user-context", input)
 		return respond(value, err)
 	})
@@ -258,7 +258,7 @@ func New(serverURL, version string) *mcp.Server {
 	})
 	for _, read := range []struct{ name, path, description string }{
 		{"get_status", "/status", "Read full operational health and unabridged failure errors on demand. Read-only; does not claim source work."},
-		{"get_settings", "/settings", "Read full current owner and agent context when a configuration or orientation task needs it. A source Run must use its captured context instead."},
+		{"get_settings", "/settings", "Read current/default contexts and context_guidance explaining where durable rules, owner preferences and Item progress belong and when to update them. Use for configuration/orientation; an active Run uses its captured context."},
 	} {
 		read := read
 		mcp.AddTool(server, &mcp.Tool{Name: read.name, Description: read.description}, func(ctx context.Context, _ *mcp.CallToolRequest, input empty) (*mcp.CallToolResult, map[string]any, error) {

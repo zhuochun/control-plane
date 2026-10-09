@@ -31,7 +31,9 @@ export function Preferences() {
       api<Settings>("/settings", {
         request_id: crypto.randomUUID(),
         timezone,
-        ...(agentsMD !== settings.data?.agents_md ? { agents_md: agentsMD } : {}),
+        ...(agentsMD !== settings.data?.agents_md
+          ? { agents_md: agentsMD }
+          : {}),
         ...(userMD !== settings.data?.user_md ? { user_md: userMD } : {}),
       }),
     onSuccess: (result) => {
@@ -46,7 +48,8 @@ export function Preferences() {
   const displayZone = effectiveTimezone(timezone);
   const agentsBytes = new TextEncoder().encode(agentsMD).length;
   const userBytes = new TextEncoder().encode(userMD).length;
-  const agentsOverLimit = agentsBytes > (settings.data?.agents_md_max_bytes ?? 8192);
+  const agentsOverLimit =
+    agentsBytes > (settings.data?.agents_md_max_bytes ?? 8192);
   const userOverLimit = userBytes > (settings.data?.user_md_max_bytes ?? 16384);
   const changedContextOverLimit =
     (agentsMD !== settings.data?.agents_md && agentsOverLimit) ||
@@ -128,7 +131,8 @@ export function Preferences() {
               <span className="tag">Agent-facing</span>
             </div>
             <p>
-              A short operating note included with every brief and run start.
+              {settings.data?.context_guidance?.agents_md ??
+                "Stable operating rules for agents working with aicp."}
             </p>
             <TextField
               fullWidth
@@ -169,8 +173,8 @@ export function Preferences() {
               <span className="tag">Agent-facing</span>
             </div>
             <p>
-              The human context that helps an agent judge relevance, tone, and
-              follow-through.
+              {settings.data?.context_guidance?.user_md ??
+                "Durable owner priorities, preferences, and constraints."}
             </p>
             <TextField
               fullWidth
@@ -203,6 +207,17 @@ export function Preferences() {
           </section>
         </div>
 
+        {settings.data?.context_guidance && (
+          <section
+            className="panel preference-section"
+            aria-label="Instruction editing guidance"
+          >
+            <h2>When to update these instructions</h2>
+            <p>{settings.data.context_guidance.update_policy}</p>
+            <p>{settings.data.context_guidance.item_context}</p>
+          </section>
+        )}
+
         <div className="preference-actions">
           <span className="preference-save-note">
             These context files are sent as text; aicp never runs them.
@@ -210,7 +225,9 @@ export function Preferences() {
           <Button
             type="submit"
             variant="contained"
-            disabled={save.isPending || !settings.data || changedContextOverLimit}
+            disabled={
+              save.isPending || !settings.data || changedContextOverLimit
+            }
           >
             {save.isPending ? "Saving…" : "Save preferences"}
           </Button>

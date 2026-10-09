@@ -2,6 +2,12 @@ import { useQuery } from "@tanstack/react-query";
 import { api } from "./api";
 
 export type Settings = {
+  context_guidance?: {
+    agents_md: string;
+    user_md: string;
+    item_context: string;
+    update_policy: string;
+  };
   timezone: string;
   agents_md: string;
   user_md: string;

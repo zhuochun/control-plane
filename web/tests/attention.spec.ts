@@ -421,6 +421,9 @@ test(
       /Working with aicp/,
     );
     await expect(page.getByLabel("Owner context")).toHaveValue(/Owner context/);
+    const guidance = page.getByRole("region", { name: "Instruction editing guidance" });
+    await expect(guidance).toContainText("confirmed lasting changes");
+    await expect(guidance).toContainText("Item's report/context");
 
     await page.getByLabel("Agent instructions").fill("a".repeat(8193));
     await expect(
@@ -438,6 +441,8 @@ test(
       .fill("# Owner\n\nPrefer concise evidence.");
     await page.getByRole("button", { name: "Save preferences" }).click();
     await expect(page.getByText("Preferences saved.")).toBeVisible();
+    await expect(guidance).toContainText("confirmed lasting changes");
+    await expect(page.getByText(/Stable operating rules:/)).toBeVisible();
 
     const settings = await request.get("/api/v1/settings");
     expect(settings.ok()).toBeTruthy();

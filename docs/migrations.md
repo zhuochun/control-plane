@@ -15,6 +15,11 @@ adapters.
    byte-accurate JSON transformation that SQLite SQL cannot express clearly,
    register a numbered transactional Go migration with the Goose provider.
    Do not edit a migration that may already have run in a user's database.
+   Guidance migrations may embed a versioned Markdown template, as migration 12
+   does with `internal/store/defaults/agents-v12.md`. Keep that template immutable
+   for historical replay; a later default gets a new template and migration.
+   Upgrade owner instructions only on exact prior-default equality; preserve
+   customized or empty values and all previously captured Run context.
 3. Update the supported schema-version bound in `internal/store/store.go` for
    the new version. Startup must continue to reject a database from a newer
    unsupported runtime.
